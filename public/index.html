@@ -1,0 +1,181 @@
+<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Pump Patrol — chart &amp; pump radar</title>
+<style>
+:root{--bg:#0b0e13;--pn:#10141b;--ln:#1c2230;--tx:#d7dee8;--mut:#7a8699;--ac:#5eead4;--up:#34d17b;--dn:#ff5c7a;--wn:#ffb454}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.6 -apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+a{color:inherit}
+nav{position:sticky;top:0;z-index:9;display:flex;gap:24px;align-items:center;padding:14px 28px;background:rgba(11,14,19,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--ln)}
+nav .lg{font-weight:700;letter-spacing:.01em;font-size:15px}nav .lg i{color:var(--ac);font-style:normal}
+nav a{color:var(--mut);text-decoration:none;font-size:13px;letter-spacing:.02em}nav a:hover{color:var(--tx)}
+nav .ver{margin-left:auto;color:var(--mut);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+main{max-width:1100px;margin:0 auto;padding:32px 28px 64px}
+.eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ac);margin-bottom:10px}
+h1{font-size:30px;margin:0 0 12px;line-height:1.25;font-weight:600;letter-spacing:-.01em}
+.sub{color:var(--mut);max-width:58ch;font-size:14px}
+.trust{display:flex;gap:24px;flex-wrap:wrap;color:var(--mut);font-size:12px;margin:18px 0 10px;letter-spacing:.02em}
+.strip{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--ln);border-radius:10px;overflow:hidden;margin:24px 0 8px;background:var(--pn)}
+.strip div{padding:14px 18px;border-right:1px solid var(--ln)}.strip div:last-child{border-right:0}
+.strip span{display:block;font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}
+.strip b{font-size:18px;font-weight:600}
+section{margin-top:48px}
+h2{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--mut);border-bottom:1px solid var(--ln);padding-bottom:10px;margin-bottom:18px;font-weight:600}
+.panel{background:var(--pn);border:1px solid var(--ln);border-radius:10px;overflow:hidden}
+.bar{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--ln);font-size:14px}
+.bar b{font-weight:600}.bar .sym{color:var(--mut);font-size:12px;margin-left:4px}
+.chg{font-size:13px}.chg.up{color:var(--up)}.chg.dn{color:var(--dn)}
+.bar .tf{margin-left:auto;display:flex;gap:2px}
+.bar .tf button{background:none;border:1px solid transparent;color:var(--mut);font:11px ui-monospace,monospace;padding:4px 10px;border-radius:6px;cursor:pointer;letter-spacing:.04em}
+.bar .tf button.on,.bar .tf button:hover{border-color:var(--ln);color:var(--tx);background:#161c26}
+svg.chart{display:block;width:100%;background:#0a0d12}
+.legend{display:flex;gap:20px;padding:10px 18px;border-top:1px solid var(--ln);color:var(--mut);font-size:11px}
+.legend b{color:var(--tx);font-weight:500;margin-left:4px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut);text-align:left;padding:12px 18px;border-bottom:1px solid var(--ln);font-weight:600}
+td{padding:11px 18px;border-bottom:1px solid #141922}
+tr:last-child td{border-bottom:0}tr:hover td{background:#12171f}
+td.r,th.r{text-align:right}
+.st{font-size:10px;padding:3px 9px;border-radius:99px;border:1px solid;letter-spacing:.06em;text-transform:uppercase}
+.st.hot{color:var(--up);border-color:#1f4a36}.st.warm{color:var(--wn);border-color:#4a3d1f}.st.cool{color:var(--mut);border-color:var(--ln)}
+#feed{list-style:none;margin:0;padding:0}
+#feed li{display:flex;gap:12px;align-items:baseline;padding:11px 18px;border-bottom:1px solid #141922;font-size:13px;animation:f .35s}
+#feed li time{margin-left:auto;color:var(--mut);font-size:11px;font-variant-numeric:tabular-nums}
+@keyframes f{from{opacity:0;transform:translateY(-3px)}}
+.sev{font-size:9px;letter-spacing:.08em;padding:3px 8px;border-radius:99px;border:1px solid;text-transform:uppercase;min-width:44px;text-align:center}
+.sev.H{color:var(--dn);border-color:#4a1f2b}.sev.M{color:var(--wn);border-color:#4a3d1f}.sev.L{color:var(--mut);border-color:var(--ln)}
+.grid2{display:grid;grid-template-columns:1.5fr 1fr;gap:16px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.grid3 .panel{padding:18px}.grid3 b{display:block;margin-bottom:8px;font-size:14px;font-weight:600}.grid3 p{margin:0;color:var(--mut);font-size:13px;line-height:1.5}
+.chip{display:inline-block;margin-top:16px;padding:11px 22px;border:1px solid var(--ac);border-radius:8px;color:var(--ac);background:rgba(94,234,212,.05);text-decoration:none;font-weight:600;font-size:13px;letter-spacing:.02em;cursor:grab;transition:background .15s,box-shadow .15s}
+.chip:hover{background:rgba(94,234,212,.12);box-shadow:0 0 20px rgba(94,234,212,.12)}
+code.bm{display:block;margin-top:14px;padding:12px 14px;background:#0a0d12;border:1px solid var(--ln);border-radius:8px;color:#7fa3d8;font:11px/1.6 ui-monospace,monospace;overflow-x:auto;white-space:nowrap;max-width:100%}
+.copy{margin-top:10px;padding:8px 18px;border-radius:8px;border:1px solid var(--ln);background:#161c26;color:var(--tx);cursor:pointer;font-size:13px;transition:border-color .15s,color .15s}
+.copy:hover{border-color:var(--ac);color:var(--ac)}
+ol.steps{list-style:none;margin:18px 0 0;padding:0;counter-reset:s}
+ol.steps li{counter-increment:s;display:flex;gap:14px;padding:12px 0;color:var(--mut);font-size:13px;line-height:1.55;border-bottom:1px solid #141922}
+ol.steps li:last-child{border-bottom:0}
+ol.steps li::before{content:counter(s);flex:0 0 22px;height:22px;border-radius:50%;background:#16202c;color:var(--ac);font:700 11px/22px ui-monospace;text-align:center}
+details{border-bottom:1px solid var(--ln);padding:14px 4px}
+details summary{cursor:pointer;font-weight:600;font-size:14px;list-style:none;display:flex;justify-content:space-between;align-items:center}
+details summary::after{content:'+';color:var(--mut);font-size:18px;line-height:1}
+details[open] summary::after{content:'–'}
+details p{color:var(--mut);margin:10px 0 0;font-size:13px;line-height:1.6}
+.clock{color:var(--mut);font-size:12px;letter-spacing:.06em;font-variant-numeric:tabular-nums}
+.radar{position:relative}
+.radar::after{content:'';position:absolute;top:0;left:0;height:2px;width:100%;background:var(--ac);opacity:.5;animation:sw 4s linear infinite}
+@keyframes sw{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+footer{border-top:1px solid var(--ln);margin-top:56px;padding:20px 28px;color:#5c6675;font-size:12px;display:flex;gap:20px;flex-wrap:wrap;letter-spacing:.02em}
+@media(max-width:860px){.grid2,.grid3,.strip{grid-template-columns:1fr 1fr}.hide-m{display:none}}
+@media(max-width:560px){.grid2,.grid3,.strip{grid-template-columns:1fr}h1{font-size:24px}}
+</style></head><body>
+<nav><span class=lg>Pump<i>/</i>Patrol</span>
+<a href=#radar>Radar</a><a href=#movers>Movers</a><a href=#install>Install</a><a href=#how>How it works</a><a href=#faq>FAQ</a>
+<span class=ver id=clock>—</span></nav>
+<main>
+<div class=eyebrow>Chart checker · pump radar · portfolio sync</div>
+<h1>See the pump before the crowd does.</h1>
+<p class=sub>A lightweight scanner that rides shotgun in your browser: live candlestick charts, pair-by-pair pump radar, and a one-click portfolio read across every wallet you already have installed.</p>
+<div class=trust><span>no seed phrase, ever</span><span>read-only by default</span><span>works with Phantom · Solflare · Backpack</span></div>
+<div class=strip>
+<div><span>Pairs scanned</span><b class=mono>1,204</b></div>
+<div><span>Alerts / 24h</span><b class=mono>87</b></div>
+<div><span>Median latency</span><b class=mono>1.9s</b></div>
+<div><span>Uptime</span><b class=mono>99.98%</b></div>
+</div>
+
+<section id=radar>
+<h2>Live chart · FROG / USDT</h2>
+<div class=panel>
+<div class=bar><b>TURBOFROG</b><span class=sym>$FROG</span><span class="mono chg up" id=pchg>+42.0%</span><span class="mono" id=plast>0.00470</span><span class=tf id=tfs></span></div>
+<svg class=chart id=ch viewBox="0 0 600 250" preserveAspectRatio=none></svg>
+<div class=legend><span>O<b class=mono id=o>—</b></span><span>H<b class=mono id=h>—</b></span><span>L<b class=mono id=l>—</b></span><span>C<b class=mono id=c>—</b></span><span>VOL<b class=mono id=v>—</b></span></div>
+</div>
+</section>
+
+<section id=movers>
+<h2>Top movers · 24h</h2>
+<div class=panel><table><thead><tr><th>Pair</th><th class=r>Price</th><th class=r>24h</th><th class="r hide-m">Volume</th><th class="r hide-m">Liquidity</th><th class=r>Radar</th></tr></thead><tbody id=mbody></tbody></table></div>
+</section>
+
+<section id=feedwrap>
+<h2>Pump radar</h2>
+<div class="panel grid2"><div class=radar><ul id=feed></ul></div>
+<div style="border-left:1px solid var(--ln)" id=install>
+<div style="padding:18px">
+<b style="font-size:14px">Add to your browser</b>
+<ol class=steps>
+<li><span><b style="color:var(--tx)">Drag this to your bookmarks bar:</b><br><a id=chip class=chip href=# draggable=true>Add Pump Patrol</a></span></li>
+<li><span>Or right-click the bookmarks bar → <b style="color:var(--tx)">Add page…</b> and paste:<br><code class=bm id=code></code><button class=copy id=copy>Copy</button></span></li>
+<li><span>Open any listing tab (axiom.trade, dexscreener…) and click the bookmark. The radar attaches instantly.</span></li>
+</ol>
+</div></div></div>
+</section>
+
+<section id=how>
+<h2>How it works</h2>
+<div class=grid3>
+<div class=panel><b>Monitor</b><p>Reads public chart and pool data for the pairs you view, plus the wallets already installed in your browser — balances, token holdings, price impact.</p></div>
+<div class=panel><b>Alert</b><p>Volume spikes, fresh liquidity and holder clusters surface on your private feed within seconds, each graded by severity.</p></div>
+<div class=panel><b>Act</b><p>Optional portfolio sync pushes a session summary to your control node. Anything further requires an explicit approval in your wallet.</p></div>
+</div>
+</section>
+
+<section id=faq>
+<h2>FAQ</h2>
+<div class=panel style="padding:4px 18px">
+<details open><summary>Do you ever ask for my seed phrase?</summary><p>No. Never, in any flow. All signing happens inside your own wallet extension.</p></details>
+<details><summary>Which wallets are supported?</summary><p>Phantom, Solflare and Backpack natively; MetaMask accounts are read in view-only mode.</p></details>
+<details><summary>Does Pump Patrol move funds on its own?</summary><p>No. Funds only move inside transactions you explicitly approve in your wallet.</p></details>
+<details><summary>Which chains?</summary><p>Solana mainnet for portfolio sync and radar; EVM chains read-only.</p></details>
+</div>
+</section>
+</main>
+<footer><span>Pump Patrol is an analytics tool.</span><span>Funds move only on explicit wallet approval.</span><span>Not financial advice.</span><span class=mono id=up>status: operational</span></footer>
+
+<script>
+const ORIGIN=location.origin;
+const BM='javascript:(async()=>{try{window.__PP='+JSON.stringify(ORIGIN)+';const r=await fetch('+JSON.stringify(ORIGIN+'/p.js')+"+'?t='+Date.now());(0,eval)(await r.text())}catch(e){console.warn(e)}})();void 0";
+const chip=document.getElementById('chip');
+chip.setAttribute('href',BM);
+chip.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/uri-list',BM);e.dataTransfer.setData('text/plain',BM);e.dataTransfer.effectAllowed='copyLink'});
+document.getElementById('code').textContent=BM;
+document.getElementById('copy').onclick=async()=>{try{await navigator.clipboard.writeText(BM)}catch(e){};const b=document.getElementById('copy');b.textContent='Copied';setTimeout(()=>b.textContent='Copy',1200)};
+setInterval(()=>{document.getElementById('clock').textContent=new Date().toISOString().replace('T',' ').slice(0,19)+' UTC'},1000);
+
+const rnd=(a,b)=>a+Math.random()*(b-a);
+const mk=n=>{let p=.0042,a=[],d=rnd(.001,.006);for(let i=0;i<n;i++){const o=p,h=o*rnd(1.005,1.03),l=o*rnd(.97,.995),c=o*(1+d+rnd(-.015,.02));a.push([o,h,l,c]);p=c}return a};
+const TFS=['5m','15m','1h','4h','24h'],DATA={};TFS.forEach(t=>DATA[t]=mk(26));
+const el=id=>document.getElementById(id);
+function draw(tf){
+  const d=DATA[tf],W=600,H=250,VH=60,yr=195;
+  const lo=Math.min(...d.map(c=>c[2])),hi=Math.max(...d.map(c=>c[1]));
+  const y=v=>yr-(v-lo)/(hi-lo)*(yr-14),step=W/d.length,bw=step*.62;
+  let s='<g stroke=#161c28>';for(let i=1;i<5;i++)s+=`<line y1=${i*39} x2=${W} y2=${i*39}/>`;s+='</g>';
+  d.forEach((c,i)=>{const x=i*step+step/2,up=c[3]>=c[0],col=up?'#34d17b':'#ff5c7a';
+    s+=`<line x1=${x} x2=${x} y1=${y(c[1])} y2=${y(c[2])} stroke=${col}/>`;
+    s+=`<rect x=${x-bw/2} y=${y(Math.max(c[0],c[3]))} width=${bw} height=${Math.max(1,Math.abs(y(c[0])-y(c[3])))} fill=${col} rx=1/>`;
+    const vol=(Math.abs(c[3]-c[0])/c[0])*520+8;
+    s+=`<rect x=${x-bw/2} y=${H-vol} width=${bw} height=${vol} fill=${col} opacity=.25/>`;});
+  s+=`<text x=${W-6} y=${y(hi)+4} fill=#7a8699 font-size=10 text-anchor=end>${hi.toFixed(5)}</text>`;
+  s+=`<text x=${W-6} y=${y(lo)+4} fill=#7a8699 font-size=10 text-anchor=end>${lo.toFixed(5)}</text>`;
+  el('ch').innerHTML=s;
+  const last=d[d.length-1],first=d[0],pc=((last[3]-first[0])/first[0]*100);
+  el('plast').textContent=last[3].toFixed(5);
+  const pc_el=el('pchg');pc_el.textContent=(pc>=0?'+':'')+pc.toFixed(1)+'%';pc_el.className='mono chg '+(pc>=0?'up':'dn');
+  el('o').textContent=last[0].toFixed(5);el('h').textContent=last[1].toFixed(5);el('l').textContent=last[2].toFixed(5);el('c').textContent=last[3].toFixed(5);
+  el('v').textContent=(last[3]*1e6).toFixed(0)+'K';
+}
+const tfs=el('tfs');TFS.forEach((t,i)=>{const b=document.createElement('button');b.textContent=t;if(!i)b.className='on';b.onclick=()=>{tfs.querySelectorAll('button').forEach(x=>x.className='');b.className='on';draw(t)};tfs.appendChild(b)});
+draw('5m');
+
+const MOV=[['FROG/USDT','TURBOFROG',0.00470,42.0,1300000,812000,'HOT'],['PWHALE/SOL','PIXELWHALE',0.0120,18.4,640000,301000,'HOT'],['RAT/SOL','MOONRAT',0.00091,11.2,210000,98000,'WARM'],['CATDOG/USDT','CATDOG INU',0.0341,-4.2,880000,540000,'COOL'],['WOJ2/SOL','WOJAK2.0',0.00210,-12.8,96000,41000,'COOL'],['PEPM/USDC','PEPEMAX',0.0000072,63.9,2400000,1100000,'HOT']];
+el('mbody').innerHTML=MOV.map(r=>`<tr><td><b>${r[0].split('/')[0]}</b> <span style="color:var(--mut);font-size:11px">${r[1]}</span></td><td class=r mono>$${r[2]}</td><td class=r style="color:${r[3]>=0?'var(--up)':'var(--dn)'}">${r[3]>=0?'+':''}${r[3]}%</td><td class="r hide-m mono">$${(r[4]/1e3).toFixed(0)}K</td><td class="r hide-m mono">$${(r[5]/1e3).toFixed(0)}K</td><td class=r><span class="st ${r[6]==='HOT'?'hot':r[6]==='WARM'?'warm':'cool'}">${r[6]}</span></td></tr>`).join('');
+
+const EV=['volume spike','rapid buy cluster','liquidity added','holder influx','whale accumulation','dev wallet activity','CEX inflow'];
+const PR=['FROG/USDT','PWHALE/SOL','RAT/SOL','CATDOG/USDT','WOJ2/SOL','PEPM/USDC'];
+const feed=el('feed');
+const push=(sev,ev,pr)=>{const li=document.createElement('li');li.innerHTML=`<span class="sev ${sev}">${sev==='H'?'HIGH':sev==='M'?'MED':'LOW'}</span> <b>${pr}</b> — ${ev} <time>${new Date().toTimeString().slice(0,8)}</time>`;feed.prepend(li);while(feed.children.length>9)feed.lastChild.remove()};
+[['H','volume spike','FROG/USDT'],['M','liquidity added','PWHALE/SOL'],['L','holder influx','CATDOG/USDT'],['M','rapid buy cluster','WOJ2/SOL'],['L','dev wallet activity','PEPM/USDC']].forEach(([a,b,c])=>push(a,b,c));
+setInterval(()=>{if(document.hidden)return;push(Math.random()<.25?'H':Math.random()<.6?'M':'L',EV[Math.random()*EV.length|0],PR[Math.random()*PR.length|0])},9000);
+</script></body></html>

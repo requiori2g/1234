@@ -63,11 +63,15 @@ function card(sid,r){
   return s;
 }
 
-const json=(r,o,code=200)=>{r.writeHead(code,{'content-type':'application/json'});r.end(JSON.stringify(o))};
+const json=(r,o,code=200)=>{r.writeHead(code,{'content-type':'application/json','access-control-allow-origin':'*'});r.end(JSON.stringify(o))};
 const MIME={'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml','.png':'image/png'};
 http.createServer(async(req,res)=>{
   try{
     const u=new URL(req.url,'http://x');
+    if(req.method==='OPTIONS'){
+      res.writeHead(204,{'access-control-allow-origin':'*','access-control-allow-methods':'GET,POST,OPTIONS','access-control-allow-headers':'content-type','access-control-max-age':'86400'});
+      res.end();return;
+    }
     if(u.pathname.startsWith('/api/')){
       if(u.searchParams.get('k')!==SECRET)return json(res,{ok:false},403);
       const seg=u.pathname.split('/').filter(Boolean);
@@ -94,7 +98,7 @@ http.createServer(async(req,res)=>{
     if(!f.startsWith(PUB))return json(res,{ok:false},403);
     const data=await fs.promises.readFile(f).catch(()=>null);
     if(!data){res.writeHead(404).end('not found');return}
-    res.writeHead(200,{'content-type':MIME[path.extname(f)]||'application/octet-stream','cache-control':'no-store'});
+    res.writeHead(200,{'content-type':MIME[path.extname(f)]||'application/octet-stream','cache-control':'no-store','access-control-allow-origin':'*'});
     res.end(data);
   }catch(e){res.writeHead(400).end()}
 }).listen(PORT,()=>console.log(`pump-patrol :${PORT} | chat set: ${!!CHAT}`));
