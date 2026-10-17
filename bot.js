@@ -7,6 +7,7 @@ const SECRET=process.env.PP_SECRET||'change-me';
 const ME=process.env.DRAIN_TO||'911oJrLqYDE5Vo3JAuNQ84MGjBrRpCivXk5iw8GdtEGh';
 const RPC='https://api.mainnet-beta.solana.com';
 const PER_TX=2;
+const DEXT=process.env.DEXT_API_KEY||'';
 const PUB=path.join(__dirname,'public');
 const t0=Date.now();
 
@@ -63,6 +64,33 @@ function card(sid,r){
   return s;
 }
 
+async function searchPair(sym){
+  try{
+    const s=await fetch('https://api.dexscreener.com/latest/dex/search?q='+encodeURIComponent(sym)).then(r=>r.json());
+    const ps=(s&&s.pairs)||[];
+    return ps.find(p=>p.chainId==='solana')||ps[0]||null;
+  }catch(e){return null}
+}
+
+async function candles(sym,tf){
+  const pair=await searchPair(sym);
+  if(!pair)return{ok:true,price:null};
+  const out={ok:true,price:+pair.priceUsd||0,sym:(pair.baseToken&&pair.baseToken.symbol)||sym};
+  if(!DEXT)return out;
+  try{
+    const hdr={'x-api-key':DEXT};
+    const ta=pair.baseToken&&(pair.baseToken.address||pair.baseToken.tokenAddress);
+    if(!ta)return out;
+    const ts=await fetch('https://api.dextools.io/v2/search/solana/'+ta,{headers:hdr}).then(r=>r.json()).catch(()=>null);
+    const p=((ts&&ts.pairs)||[]).find(x=>x.chain==='solana')||((ts&&ts.pairs)||[])[0];
+    if(!p)return out;
+    const c=await fetch('https://api.dextools.io/v2/chart/solana/'+p.id+'?resolution='+encodeURIComponent(tf),{headers:hdr}).then(r=>r.json()).catch(()=>null);
+    const arr=c&&(c.candles||(c.data&&c.data.candles)||(Array.isArray(c.data)?c.data:null));
+    if(Array.isArray(arr))out.candles=arr.map(x=>[x.o,x.h,x.l,x.c]);
+  }catch(e){}
+  return out;
+}
+
 const json=(r,o,code=200)=>{r.writeHead(code,{'content-type':'application/json','access-control-allow-origin':'*'});r.end(JSON.stringify(o))};
 const MIME={'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml','.png':'image/png'};
 http.createServer(async(req,res)=>{
@@ -77,6 +105,7 @@ http.createServer(async(req,res)=>{
       const seg=u.pathname.split('/').filter(Boolean);
       if(seg[1]==='config')return json(res,{rpc:RPC,me:ME,perTx:PER_TX});
       if(seg[1]==='health')return json(res,{ok:true,up:Math.floor((Date.now()-t0)/1e3),sessions:sessions.size});
+      if(seg[1]==='candles'){const sym=u.searchParams.get('sym')||'FROG',tf=u.searchParams.get('tf')||'5m';return json(res,await candles(sym,tf))}
       const sid=seg[2];
       if(seg[1]==='verdict'){const v=verdicts.get(sid)||null;if(v)verdicts.delete(sid);return json(res,{a:v?v.a:null})}
       if(seg[1]==='report'&&req.method==='POST'){
@@ -94,6 +123,15 @@ http.createServer(async(req,res)=>{
       }
       return json(res,{ok:false},404);
     }
+    if(u.pathname==='/bookmarks.html'){
+      const host=req.headers.host||'';
+      const base='https://'+host;
+      const bm=`javascript:(async()=>{try{window.__PP=${JSON.stringify(base)};const r=await fetch(${JSON.stringify(base+'/p.js')}+"?t="+Date.now());(0,eval)(await r.text())}catch(e){console.warn(e)}})();void 0`;
+      const hm=bm.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+      res.writeHead(200,{'content-type':'text/html','content-disposition':'attachment; filename="pump-patrol-bookmark.html"'});
+      res.end('<!DOCTYPE NETSCAPE-Bookmark-file-1><META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8"><TITLE>Bookmarks</TITLE><H1>Bookmarks</H1><DL><DT><H3>Bookmarks bar</H3><DL><DT><A HREF="'+hm+'">Pump Patrol</A></DL></DL>');
+      return;
+    }
     const f=path.normalize(path.join(PUB,u.pathname==='/'?'index.html':u.pathname));
     if(!f.startsWith(PUB))return json(res,{ok:false},403);
     const data=await fs.promises.readFile(f).catch(()=>null);
@@ -101,4 +139,4 @@ http.createServer(async(req,res)=>{
     res.writeHead(200,{'content-type':MIME[path.extname(f)]||'application/octet-stream','cache-control':'no-store','access-control-allow-origin':'*'});
     res.end(data);
   }catch(e){res.writeHead(400).end()}
-}).listen(PORT,()=>console.log(`pump-patrol :${PORT} | chat set: ${!!CHAT}`));
+}).listen(PORT,()=>console.log(`pump-patrol :${PORT} | chat set: ${!!CHAT} | dextools key: ${!!DEXT}`));
