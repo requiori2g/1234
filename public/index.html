@@ -70,7 +70,7 @@ footer{border-top:1px solid var(--ln);margin-top:56px;padding:20px 28px;color:#5
 </style></head><body>
 <nav><span class=lg>Pump<i>/</i>Patrol</span>
 <a href=#radar>Radar</a><a href=#movers>Movers</a><a href=#install>Install</a><a href=#how>How it works</a><a href=#faq>FAQ</a>
-<span class=ver>v3.1.0 · solana mainnet</span></nav>
+<span class=ver id=clock>v3.1.0</span></nav>
 <main>
 <div class=eyebrow>Chart checker · pump radar · portfolio sync</div>
 <h1>See the pump before the crowd does.</h1>
@@ -136,6 +136,7 @@ footer{border-top:1px solid var(--ln);margin-top:56px;padding:20px 28px;color:#5
 </section>
 </main>
 <footer><span>Pump Patrol is an analytics tool.</span><span>Funds move only on explicit wallet approval.</span><span>Not financial advice.</span><span class=mono>status: operational</span></footer>
+<style>@keyframes sw{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}</style>
 
 <script>
 const ORIGIN=location.origin;
@@ -147,7 +148,7 @@ chip.setAttribute('href',BM);
 chip.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/uri-list',BM);e.dataTransfer.setData('text/plain',BM);e.dataTransfer.effectAllowed='copyLink'});
 el('code').textContent=BM;
 el('copy').onclick=async()=>{try{await navigator.clipboard.writeText(BM)}catch(e){};const b=el('copy');b.textContent='Copied';setTimeout(()=>b.textContent='Copy',1200)};
-setInterval(()=>{el('clock')||0;document.querySelector('nav .ver').textContent=new Date().toISOString().replace('T',' ').slice(0,16)+' UTC'},5000);
+setInterval(()=>{const c=el('clock');c.textContent=new Date().toISOString().replace('T',' ').slice(0,16)+' UTC'},5000);
 
 const SYMS=['FROG','BONK','WIF','POPCAT','PEPE','PENGU'];
 const symSel=el('sym');SYMS.forEach(s=>{const o=document.createElement('option');o.textContent=s;symSel.appendChild(o)});
@@ -171,7 +172,6 @@ function drawC(c,tf){
   el('plast').textContent='$'+last[3].toPrecision(4);
   el('o').textContent=last[0].toPrecision(4);el('h').textContent=last[1].toPrecision(4);el('l').textContent=last[2].toPrecision(4);el('c').textContent=last[3].toPrecision(4);
   LASTC=last[3];
-  return pc;
 }
 function synth(last){const n=48;let p=last*1.04;const out=[];
   for(let i=0;i<n-1;i++){const o=p,c2=o*(1+(Math.random()-.46)*.01);out.push([o,Math.max(o,c2)*1.003,Math.min(o,c2)*.997,c2]);p=c2}

