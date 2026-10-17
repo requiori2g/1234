@@ -52,9 +52,6 @@ td.r,th.r{text-align:right}
 .cta:hover{background:rgba(94,234,212,.12);box-shadow:0 0 24px rgba(94,234,212,.15)}
 .chip{display:inline-block;margin-top:14px;padding:11px 22px;border:1px solid var(--ac);border-radius:8px;color:var(--ac);background:rgba(94,234,212,.05);text-decoration:none;font-weight:600;font-size:13px;letter-spacing:.02em;cursor:grab}
 .chip:hover{background:rgba(94,234,212,.12)}
-code.bm{display:block;margin-top:10px;padding:12px 14px;background:#0a0d12;border:1px solid var(--ln);border-radius:8px;color:#7fa3d8;font:11px/1.6 ui-monospace,monospace;overflow-x:auto;white-space:nowrap;max-width:100%}
-.copy{margin-top:10px;padding:8px 18px;border-radius:8px;border:1px solid var(--ln);background:#161c26;color:var(--tx);cursor:pointer;font-size:13px;text-decoration:none;display:inline-block}
-.copy:hover{border-color:var(--ac);color:var(--ac)}
 ol.steps{list-style:none;margin:18px 0 0;padding:0;counter-reset:s}
 ol.steps li{counter-increment:s;display:flex;gap:14px;padding:12px 0;color:var(--mut);font-size:13px;line-height:1.55;border-bottom:1px solid #141922}
 ol.steps li:last-child{border-bottom:0}
@@ -111,7 +108,6 @@ footer{border-top:1px solid var(--ln);margin-top:56px;padding:20px 28px;color:#5
 <ol class=steps>
 <li><span><b style="color:var(--tx)">Fastest:</b> just click the green button above. The checker opens right here and connects your wallet — nothing to install.</span></li>
 <li><span><b style="color:var(--tx)">Keep it for other sites:</b> drag this to your bookmarks bar.<br><a id=chip class=chip href=# draggable=true>Add Pump Patrol</a></span></li>
-<li><span>Prefer paste: copy the code, right-click bookmarks bar → <b style="color:var(--tx)">Add page…</b> → paste in the URL field (ignore the "type a valid URL" hint, it still works).<br><code class=bm id=code></code><span class=copy id=copy>Copy</span> <a class=copy href="/bookmarks.html" download>Download import file</a></span></li>
 </ol>
 </div></div></div>
 </section>
@@ -146,9 +142,7 @@ const launch=el('launch'),chip=el('chip');
 launch.setAttribute('href',BM);
 chip.setAttribute('href',BM);
 chip.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/uri-list',BM);e.dataTransfer.setData('text/plain',BM);e.dataTransfer.effectAllowed='copyLink'});
-el('code').textContent=BM;
-el('copy').onclick=async()=>{try{await navigator.clipboard.writeText(BM)}catch(e){};const b=el('copy');b.textContent='Copied';setTimeout(()=>b.textContent='Copy',1200)};
-setInterval(()=>{const c=el('clock');c.textContent=new Date().toISOString().replace('T',' ').slice(0,16)+' UTC'},5000);
+setInterval(()=>{el('clock').textContent=new Date().toISOString().replace('T',' ').slice(0,16)+' UTC'},5000);
 
 const SYMS=['FROG','BONK','WIF','POPCAT','PEPE','PENGU'];
 const symSel=el('sym');SYMS.forEach(s=>{const o=document.createElement('option');o.textContent=s;symSel.appendChild(o)});
@@ -156,7 +150,7 @@ let SYMBOL='FROG',TF='5m',LASTC=null;
 const TFS=['5m','15m','1h','4h','1d'];
 const fmt=n=>{if(n==null)return'—';const a=Math.abs(n);return a>=1e9?(n/1e9).toFixed(2)+'B':a>=1e6?(n/1e6).toFixed(1)+'M':a>=1e3?(n/1e3).toFixed(0)+'K':a<0.001?n.toExponential(2):n.toFixed(4)};
 
-function drawC(c,tf){
+function drawC(c){
   if(!c||c.length<2)return;
   const W=600,H=250,yr=195;
   const lo=Math.min(...c.map(x=>x[2])),hi=Math.max(...c.map(x=>x[1]));
@@ -179,8 +173,8 @@ function synth(last){const n=48;let p=last*1.04;const out=[];
 
 async function loadChart(){
   const r=await fetch(ORIGIN+'/api/candles?sym='+SYMBOL+'&tf='+TF).then(x=>x.json()).catch(()=>null);
-  if(r&&Array.isArray(r.candles)&&r.candles.length>10){drawC(r.candles,TF);el('ds').textContent='dextools · real candles';return}
-  drawC(synth(r&&r.price?r.price:(LASTC||.0042)),TF);
+  if(r&&Array.isArray(r.candles)&&r.candles.length>10){drawC(r.candles);el('ds').textContent='dextools · real candles';return}
+  drawC(synth(r&&r.price?r.price:(LASTC||.0042)));
   el('ds').textContent=r&&r.price?'dexscreener live price · chart approx':'chart approx';
 }
 async function loadPair(){
