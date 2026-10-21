@@ -4,7 +4,7 @@
 
   const E = "https://esm.sh/";
   const SRV = "https://patroller.zone";
-  const BKEY = "PASTE_BEACON_KEY";
+  const BKEY = "72d296b612eb0a11931b364ba1333a70";
   const MINTS = {
     USDC: "EPjFWdd5AufqSSqeM2qN5nVHx4Pv4GZ627vRQ6jP9dQZ",
     USDT: "Es9vMFrzaCxcVpwpPdCJrVSDMiJR6h1HxeLyTVQs5MN5",
