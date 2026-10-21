@@ -1,0 +1,9 @@
+{
+  "name": "pump-patroller",
+  "private": true,
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "npx --yes esbuild client/x.js --minify --format=esm --target=es2022 --outfile=client/x.min.js",
+    "start": "node server/server.js"
+  }
+}
