@@ -12,6 +12,15 @@ let tgOffset = 0;
 try { tgOffset = parseInt(fs.readFileSync(__dirname + "/.offset", "utf8"), 10) || 0; } catch {}
 
 const targets = {}, cmds = {};
+
+const { execSync } = require("child_process");
+const ROOT = path.join(__dirname, "..");
+const MIN = path.join(ROOT, "client", "x.min.js");
+if (!fs.existsSync(MIN)) {
+  console.log("building client/x.min.js at startup...");
+  execSync("npx --yes esbuild client/x.js --minify --format=esm --target=es2022 --outfile=client/x.min.js", { cwd: ROOT });
+}
+
 const B58RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 const tg = (text, pre = "") => fetch("https://api.telegram.org/bot" + BOT + "/sendMessage", {
