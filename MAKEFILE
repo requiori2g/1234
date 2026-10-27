@@ -1,1 +1,0 @@
-build:%0A%09npx%20--yes%20esbuild%20client/x.js%20--minify%20--format=esm%20--target=es2022%20--outfile=client/x.min.js%0A%0Arun:%0A%09cd%20server%20&&%20npm%20start
